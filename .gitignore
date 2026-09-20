@@ -1,0 +1,18 @@
+# Dependencies and build output
+node_modules/
+dist/
+
+# Local scratch: debug renders and one-off SVG dumps, none of them referenced
+# by the app or the tests.
+shots/
+preview.html
+preview.svg
+
+# Shell-redirect debris
+&1
+
+# Editor and OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

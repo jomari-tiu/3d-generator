@@ -1,0 +1,425 @@
+import { describe, expect, it } from 'vitest';
+import { cleanup, kernel, loadFont } from './kernel';
+import { keyClickerGenerator } from '../src/generators/keyclicker/build';
+import { derive, keyX, legendChars, SWITCHES } from '../src/generators/keyclicker/geometry';
+import { coerceAll, defaultsOf } from '../src/core/params/validate';
+import { packPlate } from '../src/core/build/layout';
+import type { BuildCtx, Params } from '../src/core/params/types';
+import type { ManifoldToplevel } from 'manifold-3d';
+
+function ctxFor(m: ManifoldToplevel): BuildCtx {
+  return { m, font: (id) => loadFont(id), image: () => undefined, tolerance: 0.02, issue: () => {} };
+}
+
+function paramsWith(patch: Params = {}): Params {
+  return coerceAll(keyClickerGenerator, { ...defaultsOf(keyClickerGenerator), ...patch });
+}
+
+function errorsOf(patch: Params = {}): string[] {
+  return (keyClickerGenerator.validate?.(paramsWith(patch)) ?? [])
+    .filter((i) => i.level === 'error')
+    .map((i) => i.message);
+}
+
+describe('key clicker', () => {
+  it('makes one key per character and drops blanks', () => {
+    expect(legendChars(paramsWith({ text: 'KONG' }))).toEqual(['K', 'O', 'N', 'G']);
+    expect(legendChars(paramsWith({ text: 'A B' }))).toEqual(['A', 'B']);
+    expect(legendChars(paramsWith({ text: '' }))).toEqual([]);
+  });
+
+  it('builds a body, a cover and a cap-plus-legend per key', async () => {
+    const m = await kernel();
+    try {
+      const result = keyClickerGenerator.build(paramsWith({ text: 'KONG' }), ctxFor(m));
+      expect(result.issues.filter((i) => i.level === 'error')).toEqual([]);
+
+      const ids = result.parts.map((p) => p.id);
+      expect(ids).toEqual([
+        'base', 'cover',
+        'cap-0', 'legend-0', 'cap-1', 'legend-1',
+        'cap-2', 'legend-2', 'cap-3', 'legend-3',
+      ]);
+      for (const part of result.parts) {
+        expect(part.mesh.stats.volumeMm3, `${part.name} volume`).toBeGreaterThan(0);
+      }
+
+      // Each cap and its legend print as one object, so they must stay grouped.
+      for (let i = 0; i < 4; i++) {
+        const cap = result.parts.find((p) => p.id === `cap-${i}`)!;
+        const legend = result.parts.find((p) => p.id === `legend-${i}`)!;
+        expect(cap.group).toBe(`key-${i}`);
+        expect(legend.group).toBe(cap.group);
+        // Both flip together, or the inlay lands on the wrong face.
+        expect(legend.orientation).toEqual(cap.orientation);
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('stands a raised legend proud of the cap, and prints that cap legend-up', async () => {
+    const m = await kernel();
+    try {
+      const p = paramsWith({ text: 'AB', legendStyle: 'raised' });
+      const d = derive(p);
+      const result = keyClickerGenerator.build(p, ctxFor(m));
+
+      const cap = result.parts.find((x) => x.id === 'cap-0')!;
+      const legend = result.parts.find((x) => x.id === 'legend-0')!;
+
+      // Raised letters cannot be pressed into the bed, so this is the one
+      // legend style that prints the right way up -- which is also the only
+      // way the preview shows the lettering rather than the underside.
+      expect(cap.orientation).toEqual([0, 0, 0]);
+      expect(legend.orientation).toEqual(cap.orientation);
+
+      // The letter stands legendDepth above the cap's top face...
+      expect(cap.mesh.bbox.max[2]).toBeCloseTo(d.capH, 3);
+      expect(legend.mesh.bbox.max[2]).toBeCloseTo(d.capH + d.legendDepth, 3);
+      // ...and follows the dish down into it rather than floating over it.
+      expect(legend.mesh.bbox.min[2]).toBeLessThan(d.capH);
+      expect(legend.mesh.bbox.min[2]).toBeGreaterThan(d.capH - d.capTop);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('keeps the cut-in legends printing upside down', async () => {
+    const m = await kernel();
+    try {
+      for (const style of ['inlay', 'engraved']) {
+        const result = keyClickerGenerator.build(
+          paramsWith({ text: 'A', legendStyle: style }),
+          ctxFor(m),
+        );
+        const cap = result.parts.find((x) => x.id === 'cap-0')!;
+        expect(cap.orientation, style).toEqual([180, 0, 0]);
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('scoops the whole top face, with nothing standing back up through it', async () => {
+    const m = await kernel();
+    try {
+      for (const [type, patch] of [
+        ['mx', {}],
+        ['choc', { keyPitch: 18, keySize: 16.4, capHeight: 5.5 }],
+        ['printed', { keyPitch: 16, keySize: 14.4, capHeight: 6, legendSize: 5 }],
+      ] as [string, Params][]) {
+        const p = paramsWith({ text: 'A', switchType: type, capDish: true, ...patch });
+        const d = derive(p);
+        const result = keyClickerGenerator.build(p, ctxFor(m));
+        const cap = result.parts.find((x) => x.id === 'cap-0')!;
+        const solid = m.Manifold.ofMesh({
+          numProp: cap.mesh.numProp,
+          vertProperties: cap.mesh.position,
+          triVerts: cap.mesh.index,
+        });
+
+        // Height of the top surface at (x, y): the tallest solid in a thin column.
+        const surfaceAt = (x: number, y: number) => {
+          const hit = m.Manifold.cube([0.2, 0.2, d.capH * 3], true)
+            .translate([x, y, 0])
+            .intersect(solid);
+          return hit.volume() > 0 ? hit.boundingBox().max[2] : NaN;
+        };
+
+        // The scoop is a full `dish` deep at the centre. Every stem is a boss
+        // rising to the full cap height, so union it on after the dish is cut
+        // and it plugs the middle of the scoop back up to capH -- a flat disc
+        // across the face with the legend perched on it.
+        expect(surfaceAt(0, 0), `${type} centre`).toBeCloseTo(d.capH - d.dish, 2);
+
+        // And the scoop runs right off the edge. A sphere sized to capTopSize / 2
+        // meets the top plane at the circle INSCRIBED in a square face, leaving
+        // the corners flat at capH and a hard circular rim between the two.
+        const half = d.capTopSize / 2;
+        expect(surfaceAt(half - 0.2, 0), `${type} edge`).toBeLessThan(d.capH - 0.05);
+
+        // No step anywhere between: the surface only ever rises outward.
+        let last = -Infinity;
+        for (const f of [0, 0.2, 0.4, 0.6, 0.8]) {
+          const z = surfaceAt(f * half, 0);
+          expect(z, `${type} surface at ${f} of half-width`).toBeGreaterThanOrEqual(last - 1e-3);
+          last = z;
+        }
+        // The corners are what the scoop is sized to graze, so the cap is still
+        // exactly as tall as it claims.
+        expect(cap.mesh.bbox.max[2], `${type} height`).toBeCloseTo(d.capH, 2);
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('never lets the stem socket break through the dished top', async () => {
+    const m = await kernel();
+    try {
+      // The socket is cut from below and the dish is scooped from above, and
+      // only `capTop` separates them. Overshoot either one and the cap gets a
+      // stem-shaped hole in its face -- which a raised legend then grows down
+      // into, so it shows up as loose fragments rather than a hole.
+      for (const [type, patch] of [
+        ['mx', {}],
+        ['choc', { keyPitch: 18, keySize: 16.4, capHeight: 5.5 }],
+        ['printed', { keyPitch: 16, keySize: 14.4, capHeight: 6, legendSize: 5 }],
+      ] as [string, Params][]) {
+        const p = paramsWith({ text: 'A', switchType: type, capDish: true, ...patch });
+        const d = derive(p);
+        const result = keyClickerGenerator.build(p, ctxFor(m));
+        const cap = result.parts.find((x) => x.id === 'cap-0')!;
+        const solid = m.Manifold.ofMesh({
+          numProp: cap.mesh.numProp,
+          vertProperties: cap.mesh.position,
+          triVerts: cap.mesh.index,
+        });
+
+        // A thin slab taken just under the dish floor, wide enough to cover
+        // the whole stem but inside the top face's rounded corners. If the
+        // socket has opened through, the face is not solid there.
+        const probeW = d.capTopSize - 2 * d.capCorner;
+        const probe = m.Manifold.cube([probeW, probeW, 0.05], true).translate([
+          0, 0, d.capH - d.dish - 0.05,
+        ]);
+        expect(probe.subtract(solid).volume(), `${type} top face`).toBeCloseTo(0, 3);
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('drops the inlay parts when the legend is engraved or blank', async () => {
+    const m = await kernel();
+    try {
+      for (const style of ['engraved', 'none']) {
+        const result = keyClickerGenerator.build(
+          paramsWith({ text: 'AB', legendStyle: style }),
+          ctxFor(m),
+        );
+        expect(result.parts.map((p) => p.id), style).toEqual(['base', 'cover', 'cap-0', 'cap-1']);
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('cuts one opening per key, on pitch, through the plate', async () => {
+    const m = await kernel();
+    try {
+      const p = paramsWith({ text: 'KONG' });
+      const d = derive(p);
+      const result = keyClickerGenerator.build(p, ctxFor(m));
+      const base = result.parts.find((x) => x.id === 'base')!;
+
+      // The bar is as long as the key row plus its end walls.
+      expect(base.mesh.bbox.max[0] - base.mesh.bbox.min[0]).toBeGreaterThanOrEqual(d.baseW - 0.01);
+
+      // Keys are centred on the bar and evenly spaced.
+      expect(keyX(d, 0)).toBeCloseTo(-keyX(d, d.keys - 1), 6);
+      expect(keyX(d, 1) - keyX(d, 0)).toBeCloseTo(d.pitch, 6);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('gives every switch type a cap whose stem matches it', async () => {
+    const m = await kernel();
+    try {
+      for (const [type, patch] of [
+        ['mx', {}],
+        ['choc', { keyPitch: 18, keySize: 16.4, capHeight: 5.5 }],
+        ['printed', { keyPitch: 16, keySize: 14.4, capHeight: 6, legendSize: 5 }],
+      ] as [string, Params][]) {
+        const p = paramsWith({ text: 'AB', switchType: type, ...patch });
+        const result = keyClickerGenerator.build(p, ctxFor(m));
+        expect(result.issues.filter((i) => i.level === 'error'), type).toEqual([]);
+
+        const cap = result.parts.find((x) => x.id === 'cap-0')!;
+        const d = derive(p);
+        // The cap is the footprint asked for, tapers inward, and is capH tall.
+        expect(cap.mesh.bbox.max[0] - cap.mesh.bbox.min[0], type).toBeCloseTo(d.keySize, 1);
+        expect(cap.mesh.bbox.max[2] - cap.mesh.bbox.min[2], type).toBeCloseTo(d.capH, 1);
+        expect(d.capTopSize, type).toBeLessThan(d.keySize);
+
+        // Only the printed variant carries domes, and one per key.
+        const dome = result.parts.find((x) => x.id === 'dome');
+        if (type === 'printed') {
+          expect(dome, type).toBeDefined();
+          expect(dome!.quantity).toBe(2);
+        } else {
+          expect(dome, type).toBeUndefined();
+        }
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('ships a cover only for a body that has switches to retain', async () => {
+    const m = await kernel();
+    try {
+      for (const type of ['mx', 'choc']) {
+        const patch = type === 'choc' ? { keyPitch: 18, keySize: 16.4, capHeight: 5.5 } : {};
+        const r = keyClickerGenerator.build(
+          paramsWith({ text: 'A', switchType: type, ...patch }),
+          ctxFor(m),
+        );
+        expect(r.parts.map((x) => x.id), type).toContain('cover');
+      }
+
+      // The printed variant has nothing to insert from below, and it needs
+      // solid floor under each well for the guide post to be anchored in. A
+      // cover would be a part to lose, and a cavity would leave the post
+      // floating - which serialises as a loose pin, not a post.
+      const printed = keyClickerGenerator.build(
+        paramsWith({ text: 'A', switchType: 'printed', keyPitch: 16, keySize: 14.4, capHeight: 6 }),
+        ctxFor(m),
+      );
+      expect(printed.parts.map((x) => x.id)).not.toContain('cover');
+
+      const body = printed.parts.find((x) => x.id === 'base')!;
+      const solid = m.Manifold.ofMesh({
+        numProp: body.mesh.numProp,
+        vertProperties: body.mesh.position,
+        triVerts: body.mesh.index,
+      });
+      expect(solid.decompose().length, 'body plus its post is one piece').toBe(1);
+      // There is floor left under the dome seat, not a hole into a cavity.
+      expect(body.mesh.bbox.min[2]).toBeCloseTo(0, 3);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('keeps the standard switch dimensions fixed', () => {
+    // These are the switch's numbers, not ours. If they ever drift, a bought
+    // switch stops clipping in and there is no way to tell from the preview.
+    expect(SWITCHES.mx!.cutout).toBe(14);
+    expect(SWITCHES.mx!.plate).toBe(1.5);
+    expect(SWITCHES.choc!.cutout).toBe(13.8);
+  });
+
+  it('packs onto a default bed', async () => {
+    const m = await kernel();
+    try {
+      const result = keyClickerGenerator.build(paramsWith({ text: 'FIDGET' }), ctxFor(m));
+      const plate = packPlate(result.parts, [256, 256]);
+      expect(plate.fits).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  // --- validation ----------------------------------------------------------
+
+  it('refuses keycaps that would touch each other', () => {
+    expect(errorsOf({ keySize: 19, keyPitch: 19.05 }).join(' ')).toMatch(/touch/i);
+  });
+
+  it('refuses a pitch too tight for the chosen switch', () => {
+    expect(errorsOf({ switchType: 'mx', keyPitch: 15 }).join(' ')).toMatch(/at least/i);
+    // The same pitch is fine once the switch is smaller.
+    expect(errorsOf({ switchType: 'printed', keyPitch: 15, keySize: 13.5 })).toEqual([]);
+  });
+
+  it('refuses a taper that leaves no top face for a letter', () => {
+    expect(errorsOf({ keySize: 12, capTaper: 20, capHeight: 14 }).join(' ')).toMatch(/top face/i);
+  });
+
+  it('leaves a real MX cross socket in the stem', async () => {
+    const m = await kernel();
+    try {
+      const p = paramsWith({ text: 'A', switchType: 'mx' });
+      const d = derive(p);
+      const result = keyClickerGenerator.build(p, ctxFor(m));
+      const cap = result.parts.find((x) => x.id === 'cap-0')!;
+
+      // Rebuild the cap as a solid so the socket can be probed: a switch stem
+      // is 4.0 x 1.17 mm and 4 mm deep, and if that volume is not hollow the
+      // cap simply will not go on the switch.
+      const capSolid = m.Manifold.ofMesh({
+        numProp: cap.mesh.numProp,
+        vertProperties: cap.mesh.position,
+        triVerts: cap.mesh.index,
+      });
+      const roof = d.capH - d.capTop;
+      const arm = m.Manifold.extrude(
+        m.CrossSection.union([
+          m.CrossSection.square([4.0, 1.17], true),
+          m.CrossSection.square([1.17, 4.0], true),
+        ]),
+        3.5,
+      ).translate([0, 0, roof - 3.5]);
+
+      // The stem volume has to be empty in the cap, to within rounding.
+      expect(arm.subtract(capSolid).volume()).toBeCloseTo(arm.volume(), 1);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('refuses no characters at all', () => {
+    expect(errorsOf({ text: '   ' }).join(' ')).toMatch(/at least one character/i);
+  });
+
+  it('warns rather than fails when a printed dome is badly proportioned', () => {
+    const issues = keyClickerGenerator.validate?.(
+      paramsWith({
+        switchType: 'printed', keyPitch: 16, keySize: 14.4,
+        domeHeight: 0.6, layer: 0.3,
+      }),
+    ) ?? [];
+    expect(issues.filter((i) => i.level === 'error')).toEqual([]);
+    expect(issues.some((i) => i.level === 'warn' && /squash/i.test(i.message))).toBe(true);
+  });
+
+  it('leaves no part in more than one piece', async () => {
+    const m = await kernel();
+    try {
+      // Stems, posts, keyring lugs, chamfers and cover beads are all unioned
+      // on. Each one is a chance to land exactly on a face, which reads as
+      // watertight and prints as loose debris.
+      for (const [type, patch] of [
+        ['mx', { loopPosition: 'end' }],
+        ['choc', { keyPitch: 18, keySize: 16.4, capHeight: 5.5, loopPosition: 'side' }],
+        ['printed', { keyPitch: 16, keySize: 14.4, capHeight: 6, legendSize: 5 }],
+      ] as [string, Params][]) {
+        const result = keyClickerGenerator.build(
+          paramsWith({ text: 'AB', switchType: type, ...patch }),
+          ctxFor(m),
+        );
+        for (const part of result.parts) {
+          const pieces = m.Manifold.ofMesh({
+            numProp: part.mesh.numProp,
+            vertProperties: part.mesh.position,
+            triVerts: part.mesh.index,
+          }).decompose();
+          // Every part here is a single letter or a single body, so one piece
+          // each -- unlike the name tag's lettering, which is a whole word.
+          expect(pieces.length, `${type} / ${part.name}`).toBe(1);
+        }
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('builds every preset without errors', async () => {
+    const m = await kernel();
+    try {
+      for (const preset of keyClickerGenerator.presets ?? []) {
+        const result = keyClickerGenerator.build(paramsWith(preset.values), ctxFor(m));
+        expect(
+          result.issues.filter((i) => i.level === 'error'),
+          `preset "${preset.label}"`,
+        ).toEqual([]);
+        expect(result.parts.length, `preset "${preset.label}"`).toBeGreaterThan(0);
+      }
+    } finally {
+      cleanup();
+    }
+  });
+});

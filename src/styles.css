@@ -1,0 +1,615 @@
+:root {
+  --sidebar-w: 340px;
+  --bg: #14161a;
+  --panel: #1b1e24;
+  --panel-2: #21252c;
+  --line: #2e343d;
+  --text: #e6e9ef;
+  --muted: #939cab;
+  --accent: #4c9ffe;
+  --warn: #e2b341;
+  --error: #ef5f5f;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+#app {
+  display: grid;
+  grid-template-columns: var(--sidebar-w) 1fr;
+  height: 100vh;
+}
+
+/* ---------- sidebar ---------- */
+
+#sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+}
+
+.sb-head {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+
+.sb-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.sb-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0;
+}
+
+.btn-back {
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+.btn-back::before { content: "\2190\00a0"; }
+.btn-back:hover { color: var(--accent); }
+
+.sb-title-row .sb-title::before {
+  content: "\00b7";
+  margin-right: 8px;
+  color: var(--line);
+}
+
+.sb-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.sb-foot {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--line);
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ---------- viewport ---------- */
+
+#viewport {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+}
+
+#viewport canvas { display: block; }
+
+.hud {
+  position: absolute;
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+.hud-tl { top: 10px; left: 12px; }
+.hud-bl { bottom: 10px; left: 12px; }
+
+.hud-badge {
+  display: inline-block;
+  background: rgba(20, 22, 26, 0.72);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 4px 8px;
+  margin-right: 6px;
+}
+
+/* ---------- generic controls ---------- */
+
+button, select, input {
+  font: inherit;
+  color: inherit;
+}
+
+.btn {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 7px 10px;
+  cursor: pointer;
+  text-align: center;
+}
+
+.btn:hover { border-color: #414a57; }
+.btn:active { background: #191c22; }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: #06203d; font-weight: 600; }
+.btn-primary:hover { filter: brightness(1.08); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.hint { color: var(--muted); font-size: 12px; }
+
+/* ---------- generator picker ---------- */
+
+#gen-picker, #preset-sel {
+  width: 100%;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin-bottom: 6px;
+}
+
+/* ---------- sidebar tabs ---------- */
+
+/* Sticky, because the whole point is knowing where you are: scroll down inside
+   Facade and the bar stays put rather than scrolling away with the controls. */
+.tabs {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 4px;
+  padding: 0 8px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+.tabs[hidden] { display: none; }
+
+.tab {
+  flex: 1 1 auto;
+  min-width: 68px;
+  position: relative;
+  padding: 9px 4px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  /* Four tabs in 340px: let a long label shrink rather than wrap the bar. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tab[hidden] { display: none; }
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* A tab can hide a flagged control, so it says when it is holding one. The dot
+   sits over the label's trailing edge, which is padding on every label. */
+.tab.has-error::after,
+.tab.has-warn::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.tab.has-warn::after { background: var(--warn); }
+.tab.has-error::after { background: var(--error); }
+
+/* ---------- parameter groups ---------- */
+
+.group { border-bottom: 1px solid var(--line); }
+.group[hidden] { display: none; }
+
+.group > summary {
+  cursor: pointer;
+  padding: 9px 14px;
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  list-style: none;
+}
+
+.group > summary::-webkit-details-marker { display: none; }
+.group > summary::before { content: "▸ "; }
+.group[open] > summary::before { content: "▾ "; }
+.group > summary:hover { color: var(--text); }
+
+.group-body { padding: 2px 14px 12px; }
+
+/* ---------- rows ---------- */
+
+.row { padding: 6px 0; }
+.row[hidden] { display: none; }
+
+.row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.row-label { flex: 1 1 auto; display: flex; align-items: center; gap: 7px; }
+
+.row-value {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+
+.pair { display: flex; align-items: center; gap: 8px; }
+
+input[type="range"] {
+  flex: 1 1 auto;
+  min-width: 0;
+  accent-color: var(--accent);
+}
+
+input.num {
+  flex: 0 0 62px;
+  width: 62px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 4px 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.row input[type="text"], .row textarea, .row select {
+  width: 100%;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 6px 8px;
+  resize: vertical;
+}
+
+input.check { accent-color: var(--accent); width: 15px; height: 15px; }
+
+input.color {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 22px;
+  padding: 0;
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+.row .hint { margin-top: 4px; }
+
+label.upload {
+  display: block;
+  margin-top: 6px;
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
+label.upload input.file { display: none; }
+
+/* Vector export buttons are built per build, so they live in their own box --
+   display:contents lets them sit in the export row as if they were siblings. */
+.foot-vectors { display: contents; }
+
+/* ---------- image drop zone ---------- */
+
+.drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 10px;
+  margin-top: 2px;
+  background: var(--panel-2);
+  border: 1px dashed var(--line);
+  border-radius: 7px;
+  cursor: pointer;
+  text-align: center;
+  transition: border-color 120ms, background 120ms;
+}
+.drop:hover, .drop:focus-visible { border-color: var(--accent); outline: none; }
+.drop.over {
+  border-color: var(--accent);
+  border-style: solid;
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel-2));
+}
+.drop input.file { display: none; }
+
+.drop-canvas {
+  display: block;
+  max-width: 100%;
+  border-radius: 4px;
+  /* The mask is a hard black-and-white image; letting the browser smooth it on
+     the way to CSS pixels is what keeps a downscaled outline readable. */
+  image-rendering: auto;
+}
+.drop-canvas[hidden] { display: none; }
+
+.drop-cap {
+  color: var(--muted);
+  font-size: 12px;
+  word-break: break-word;
+}
+
+.row.has-error .drop { border-color: var(--error); }
+.row.has-warn .drop { border-color: var(--warn); }
+
+.row.has-error .pair input[type="range"],
+.row.has-error input, .row.has-error textarea, .row.has-error select {
+  outline: 1px solid var(--error);
+}
+.row.has-warn input, .row.has-warn textarea, .row.has-warn select {
+  outline: 1px solid var(--warn);
+}
+
+.btn-sub { padding: 5px 8px; font-size: 12px; }
+
+/* ---------- issues + readouts ---------- */
+
+.issues:empty { display: none; }
+.issues { padding: 10px 14px 0; }
+
+.issue {
+  border-radius: 6px;
+  padding: 7px 9px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  border: 1px solid;
+}
+
+.issue-error { background: rgba(239, 95, 95, 0.12); border-color: rgba(239, 95, 95, 0.5); }
+.issue-warn { background: rgba(226, 179, 65, 0.1); border-color: rgba(226, 179, 65, 0.45); }
+
+.readouts:empty { display: none; }
+.readouts { padding: 10px 14px; color: var(--muted); font-size: 12px; }
+
+.readout { display: flex; justify-content: space-between; gap: 10px; padding: 2px 0; }
+.readout-v { font-variant-numeric: tabular-nums; color: var(--text); }
+
+/* ---------- footer ---------- */
+
+.foot-row { display: flex; gap: 8px; }
+.foot-row > * { flex: 1 1 auto; min-width: 0; }
+.foot-row > .btn-sub { flex: 0 0 auto; }
+/* Opts a small button back into filling the row, e.g. the share button beside
+   Reset. Declared after .btn-sub so it wins at equal specificity. */
+.foot-row > .btn-grow { flex: 1 1 auto; }
+
+/* Export layout: a label and a segmented pair. The label does not stretch, the
+   segment does, so the two buttons split the rest of the row evenly. */
+.layout-row { align-items: center; }
+.layout-row > .hint { flex: 0 0 auto; }
+.layout-row > .seg { margin-right: 0; }
+.layout-row > .seg > .btn-hud { flex: 1 1 0; }
+
+.busy:empty { display: none; }
+
+/* ---------- hud tools ---------- */
+
+.tools { pointer-events: auto; display: flex; gap: 6px; }
+
+.btn-hud {
+  background: rgba(20, 22, 26, 0.72);
+  font-size: 12px;
+  padding: 5px 9px;
+}
+.btn-hud.active { border-color: var(--accent); color: var(--accent); }
+
+/* ---------- front page ---------- */
+
+#home {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background:
+    radial-gradient(1100px 600px at 18% -12%, rgba(76, 159, 254, 0.16), transparent 62%),
+    radial-gradient(900px 520px at 88% 8%, rgba(232, 102, 60, 0.11), transparent 58%),
+    var(--bg);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+#home[hidden] { display: none; }
+
+.home-inner {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: clamp(32px, 7vh, 76px) 24px 56px;
+}
+
+.home-head h1 {
+  margin: 0 0 10px;
+  font-size: clamp(28px, 4.4vw, 40px);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.home-head p {
+  margin: 0 0 clamp(24px, 4vh, 40px);
+  max-width: 62ch;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.home-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+  gap: 16px;
+}
+
+.model-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+  cursor: pointer;
+  transition: border-color 120ms ease, transform 120ms ease, background 120ms ease;
+}
+
+.model-card:hover,
+.model-card:focus-visible {
+  border-color: var(--accent);
+  background: var(--panel-2);
+  transform: translateY(-2px);
+  outline: none;
+}
+
+.model-art {
+  border-radius: 8px;
+  background: #11131700;
+  background-image: linear-gradient(160deg, rgba(255, 255, 255, 0.05), rgba(0, 0, 0, 0.18));
+  padding: 8px;
+}
+
+.model-art svg { display: block; width: 100%; height: auto; }
+
+.model-body { display: flex; flex-direction: column; gap: 8px; flex: 1 1 auto; }
+
+.model-body h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.model-tagline { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+
+.model-points {
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.model-points li { padding-left: 17px; position: relative; line-height: 1.45; }
+
+.model-points li::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 7px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0.75;
+}
+
+.model-cta {
+  margin-top: auto;
+  padding-top: 10px;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+}
+.model-cta::after { content: "\00a0\2192"; }
+
+.home-foot { margin: 28px 0 0; max-width: 62ch; }
+
+@media (max-width: 720px) {
+  .home-inner { padding-left: 16px; padding-right: 16px; }
+}
+
+/* ---------- preview mode + parts list ---------- */
+
+.hud-tr { top: 10px; right: 12px; }
+
+/* Segmented control: two buttons reading as one switch, not two toggles. */
+.seg { display: flex; margin-right: 4px; }
+.seg > .btn-hud { border-radius: 0; margin: 0; }
+.seg > .btn-hud:first-child { border-radius: 6px 0 0 6px; }
+.seg > .btn-hud:last-child { border-radius: 0 6px 6px 0; margin-left: -1px; }
+
+.parts-panel {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-width: 250px;
+  max-height: calc(100% - 24px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.parts-panel:empty { display: none; }
+
+.parts-head {
+  margin: 0 0 3px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-align: right;
+  color: var(--muted);
+}
+
+.part-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 4px 3px 7px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: rgba(20, 22, 26, 0.72);
+}
+
+.part-row:hover { border-color: var(--line); }
+.part-row.solo { border-color: var(--accent); }
+
+.part-swatch {
+  flex: 0 0 auto;
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  border: 1px solid rgba(0, 0, 0, 0.45);
+}
+
+.part-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.part-name:hover { color: var(--accent); }
+.part-row.solo .part-name { color: var(--accent); }
+
+.part-dl { flex: 0 0 auto; padding: 2px 6px; font-size: 11px; }
