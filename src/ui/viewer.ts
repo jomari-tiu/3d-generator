@@ -3,6 +3,7 @@ import {
   Box3,
   BufferAttribute,
   BufferGeometry,
+  CanvasTexture,
   Color,
   DirectionalLight,
   EdgesGeometry,
@@ -15,10 +16,13 @@ import {
   PerspectiveCamera,
   Scene,
   Sphere,
+  Sprite,
+  SpriteMaterial,
   Vector3,
   WebGLRenderer,
 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { dimensionDrawing } from './dimensions';
 
 export interface ViewPart {
   readonly id: string;
@@ -31,6 +35,10 @@ export interface ViewPart {
 /** Gap between one plate and the next when a model needs several. */
 const PLATE_GAP = 24;
 
+/** On-screen height of a dimension label, in CSS pixels. */
+const LABEL_PX = 15;
+const DIM_COLOR = 0x8fb6ff;
+
 /** Z-up, millimetre-scale viewer with orbit / pan / zoom and on-demand rendering. */
 export class Viewer {
   readonly renderer: WebGLRenderer;
@@ -40,11 +48,14 @@ export class Viewer {
 
   private readonly modelRoot = new Group();
   private readonly plateRoot = new Group();
+  private readonly dimRoot = new Group();
   private readonly meshes = new Map<string, Mesh>();
   private readonly edges = new Map<string, LineSegments>();
+  private readonly labels: Sprite[] = [];
   private needsRender = true;
   private wireframe = false;
   private showEdges = true;
+  private showDims = false;
   private bed: readonly [number, number] = [256, 256];
   private plateCount = 1;
 
@@ -78,6 +89,8 @@ export class Viewer {
 
     this.scene.add(this.plateRoot);
     this.scene.add(this.modelRoot);
+    this.scene.add(this.dimRoot);
+    this.dimRoot.visible = false;
     this.buildPlate();
 
     // Observe the viewport element rather than window, so this stays correct
@@ -90,6 +103,10 @@ export class Viewer {
       if (this.controls.update()) this.needsRender = true;
       if (this.needsRender) {
         this.needsRender = false;
+        // Before the render, not after: the labels are sized from where the
+        // camera is NOW, and sizing them from the previous frame's camera
+        // leaves them visibly lagging a drag.
+        if (this.showDims) this.sizeLabels();
         this.renderer.render(this.scene, this.camera);
       }
     };
@@ -206,6 +223,10 @@ export class Viewer {
       this.dropEdges(id);
     }
 
+    // The dimensions are of what is on screen, so they are rebuilt with it --
+    // including when the only thing that changed is which parts are visible.
+    if (this.showDims) this.buildDimensions();
+
     this.invalidate();
   }
 
@@ -242,8 +263,33 @@ export class Viewer {
     this.invalidate();
   }
 
-  /** Frame the current model. */
-  fitView(): void {
+  // ------------------------------------------------------------- dimensions
+
+  /**
+   * Draw the overall size of whatever is on screen, as dimension lines on the
+   * model rather than as a number in a corner.
+   *
+   * Measured over the VISIBLE meshes, which is what makes one implementation
+   * serve every generator and every view at once: the assembled model in Whole,
+   * the packed plate in Parts, and -- because hiding parts in the parts panel
+   * is the same thing as making them invisible here -- a single part on its own
+   * the moment you switch the others off. Nothing here knows what a lamp or a
+   * drawer is, in the same way nothing else in this file does.
+   */
+  setDimensions(on: boolean): void {
+    if (this.showDims === on) return;
+    this.showDims = on;
+    this.dimRoot.visible = on;
+    if (on) this.buildDimensions();
+    this.invalidate();
+  }
+
+  get dimensionsVisible(): boolean {
+    return this.showDims;
+  }
+
+  /** Bounding box of the visible meshes, in world space. */
+  private visibleBox(): Box3 {
     const box = new Box3();
     for (const m of this.meshes.values()) {
       if (!m.visible) continue;
@@ -251,6 +297,107 @@ export class Viewer {
       const bb = m.geometry.boundingBox;
       if (bb) box.union(bb);
     }
+    return box;
+  }
+
+  private clearDimensions(): void {
+    for (const child of this.dimRoot.children) {
+      const any = child as LineSegments & Sprite;
+      any.geometry?.dispose();
+      const mat = any.material as LineBasicMaterial & SpriteMaterial;
+      mat?.map?.dispose();
+      mat?.dispose();
+    }
+    this.dimRoot.clear();
+    this.labels.length = 0;
+  }
+
+  /**
+   * A label that always reads at the same size on screen.
+   *
+   * A sprite sized in world units is a dimension you cannot read the moment you
+   * zoom out to see the whole model -- which is exactly when you want to read
+   * it. Sized per frame against the camera distance instead, so it behaves like
+   * an annotation rather than like a decal stuck to the model.
+   */
+  private makeLabel(text: string, at: Vector3): Sprite {
+    const pad = 10;
+    const font = 42;
+    const probe = document.createElement('canvas').getContext('2d');
+    if (probe) probe.font = `600 ${font}px ui-sans-serif, system-ui, sans-serif`;
+    const w = Math.ceil((probe?.measureText(text).width ?? text.length * font * 0.55) + pad * 2);
+    const h = font + pad * 2;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.fillStyle = 'rgba(14, 17, 22, 0.86)';
+      if (typeof ctx.roundRect === 'function') {
+        ctx.beginPath();
+        ctx.roundRect(0, 0, w, h, 10);
+        ctx.fill();
+      } else {
+        ctx.fillRect(0, 0, w, h);
+      }
+      ctx.font = `600 ${font}px ui-sans-serif, system-ui, sans-serif`;
+      ctx.fillStyle = '#d7e6ff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, w / 2, h / 2 + 1);
+    }
+
+    const texture = new CanvasTexture(canvas);
+    const sprite = new Sprite(
+      new SpriteMaterial({ map: texture, depthTest: false, transparent: true }),
+    );
+    sprite.position.copy(at);
+    sprite.renderOrder = 11;
+    sprite.userData.aspect = w / h;
+    this.labels.push(sprite);
+    return sprite;
+  }
+
+  private sizeLabels(): void {
+    const px = this.renderer.domElement.clientHeight || 1;
+    const perUnit = (2 * Math.tan((this.camera.fov * Math.PI) / 360)) / px;
+    for (const s of this.labels) {
+      const worldH = this.camera.position.distanceTo(s.position) * perUnit * LABEL_PX;
+      s.scale.set(worldH * (s.userData.aspect as number), worldH, 1);
+    }
+  }
+
+  private buildDimensions(): void {
+    this.clearDimensions();
+    const box = this.visibleBox();
+    if (box.isEmpty()) return;
+
+    const drawing = dimensionDrawing(
+      [box.min.x, box.min.y, box.min.z],
+      [box.max.x, box.max.y, box.max.z],
+    );
+    if (!drawing) return;
+
+    for (const label of drawing.labels) {
+      this.dimRoot.add(this.makeLabel(label.text, new Vector3(...label.at)));
+    }
+
+    const geom = new BufferGeometry();
+    geom.setAttribute('position', new BufferAttribute(drawing.segments, 3));
+    const lines = new LineSegments(
+      geom,
+      // Drawn over the model, like every other annotation: a dimension that
+      // disappears behind the thing it is measuring is worse than no dimension.
+      new LineBasicMaterial({ color: DIM_COLOR, depthTest: false, transparent: true, opacity: 0.9 }),
+    );
+    lines.renderOrder = 10;
+    this.dimRoot.add(lines);
+  }
+
+  /** Frame the current model. */
+  fitView(): void {
+    const box = this.visibleBox();
     if (box.isEmpty()) return;
 
     const sphere = box.getBoundingSphere(new Sphere());

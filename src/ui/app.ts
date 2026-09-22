@@ -382,7 +382,15 @@ export class App {
       wire.classList.toggle('active', wireOn);
       this.viewer.setWireframe(wireOn);
     });
-    tools.append(fit, wire);
+    const dims = button('Dimensions', 'btn btn-hud');
+    dims.title =
+      'Overall size of what is on screen, measured on the model. Hide parts to measure one of them on its own.';
+    dims.addEventListener('click', () => {
+      const on = !this.viewer.dimensionsVisible;
+      dims.classList.toggle('active', on);
+      this.viewer.setDimensions(on);
+    });
+    tools.append(fit, wire, dims);
     this.viewportEl.appendChild(tools);
 
     this.partsPanel = div('hud hud-tr parts-panel');

@@ -101,6 +101,21 @@ move off the main thread without touching anything above it.
 
 ### Some decisions worth knowing about
 
+**Dimensions are measured off the screen, not off the generator.** The **Dimensions** button draws
+the overall size on the model, and what it measures is the bounding box of the *visible* meshes —
+which is what lets one implementation serve every generator and every view at once. In Whole it
+measures the assembled model, in Parts the packed plate, and because hiding a part in the parts
+panel is the same thing as making it invisible to the viewer, switching the others off measures
+that one part on its own. Nothing in it knows what a lamp or a drawing is.
+
+The three dimensions hang off three *different* offsets, and that is not tidiness: a name tag is
+51 × 20 × 3.6 mm, and with depth and height on the same corner their two labels land on top of
+each other and neither number can be read. The labels are canvas sprites re-scaled every frame
+against the camera distance, so they stay the same size on screen — one sized in world units is
+unreadable exactly when you have zoomed out to see the whole model. The placement is pure
+arithmetic in `src/ui/dimensions.ts` and tested there, because a WebGL context is a terrible place
+to find out that the height dimension is measuring the depth.
+
 **Kernel: `manifold-3d`, only.** It guarantees manifold output, which is the whole requirement
 for a printable file, and ships a 2D kernel (Clipper2) whose `offset` is the entire fillet story
 here. Three.js is used *only* for display and never touches exported geometry.
