@@ -24,7 +24,12 @@ describe('assembled preview', () => {
     try {
       // Most generators build every part where it belongs, so the assembled
       // view is the raw build and the offset is absent rather than zero.
-      for (const gen of GENERATORS.filter((g) => g.id !== 'keyclicker')) {
+      //
+      // The two exceptions each build a part at the origin because that is the
+      // only sane frame to model it in -- a keycap's stem socket, a lamp
+      // shade's fluted surface -- and then say where it belongs.
+      const placed = new Set(['keyclicker', 'lamp']);
+      for (const gen of GENERATORS.filter((g) => !placed.has(g.id))) {
         const result = gen.build(coerceAll(gen, defaultsOf(gen)), ctxFor(m));
         for (const part of result.parts) {
           expect(part.assembly, `${gen.name} / ${part.name}`).toBeUndefined();

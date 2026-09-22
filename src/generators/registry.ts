@@ -5,6 +5,7 @@ import { organizerGenerator } from './organizer/build';
 import { imageTraceGenerator } from './imagetrace/build';
 import { keyClickerGenerator } from './keyclicker/build';
 import { keychainGenerator } from './keychain/build';
+import { lampGenerator } from './lamp/build';
 import { nameTagGenerator } from './nametag/build';
 import { patternGenerator } from './pattern/build';
 import { petBowlGenerator } from './petbowl/build';
@@ -14,6 +15,7 @@ export const GENERATORS: readonly Generator[] = [
   nameTagGenerator,
   keychainGenerator,
   petBowlGenerator,
+  lampGenerator,
   keyClickerGenerator,
   buildingGenerator,
   drawerGenerator,

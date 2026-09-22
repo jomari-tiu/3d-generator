@@ -4,7 +4,7 @@ A browser app that turns parameters into **print-ready 3D models**. Everything i
 in millimetres, built with a solid-modelling kernel, and exported as watertight STL / 3MF.
 
 Open it and you land on a **model picker** — choose what you want to print, set it up, export it.
-Nine generators so far:
+Eleven generators so far:
 
 - **Name tag** — lettering on a plate, with five ready-made school-tag shapes and an optional
   grade-and-section line under the name.
@@ -12,6 +12,10 @@ Nine generators so far:
   backing that follows their outline. Reads across or stacked.
 - **Pet bowl** — a cat or dog food bowl with a wavy two-colour body, a name plaque and a
   non-slip foot. Each colour exports as its own part.
+- **Table lamp** — a two-part table lamp built round a threaded E27 holder: a cone base the
+  socket clamps to, and a fluted shade that either sits on it or hangs from the shade ring. Swirled
+  mushroom or pleated empire, from the same surface. It checks the bulb you name clears the inside
+  of the shade at every height.
 - **Key clicker** — a row of keyboard keys on a keychain. Spell anything, press them, they click.
 - **Building miniature** — a scale model building at 1:144 or 1:100, designed in feet and inches: real floor
   slabs, 8-to-10 ft storeys, rooms laid out by plan and a stair core through every floor. Four
@@ -1350,6 +1354,110 @@ web does not all join up you get told how many loose pieces it would print as, w
 Invert does to a tiling. Raised gives the pattern its own coloured body in the same group as the
 panel, for a filament swap. Fluting is Ribs with the Raised mode: a 2D sketch cannot carry a round
 groove profile, and this kernel has no loft to give it one.
+
+### Table lamp: the bulb has to fit, and the shade has to get past the ring
+
+The hardware is the starting point, not an afterthought: a threaded E27 holder on a cord with an
+inline switch and a moulded plug. It mounts *through* a plate — the threaded skirt passes up
+through a hole, the holder's own flange stops it underneath, and the shade ring screws down from
+above and clamps the plate between the two. So the hole in the base's deck is sized to the
+**thread**, and the ring has to be comfortably wider than that hole or there is nothing for it to
+bear on. Every socket number is editable, because these vary a millimetre or two between suppliers
+and the only reliable source is a caliper.
+
+**The shade is lofted, not booleaned.** Its surface is `r(theta, z)` — a single-valued polar height
+field — and writing that out as a mesh directly is the only construction that guarantees what the
+sidebar promises: every cross-section is a simple closed curve, so there is no flute depth, lobe
+count or twist that can make the shade pass through itself. Sweeping sixty ribs round a cone and
+unioning them gives the same silhouette, no such guarantee, and sixty booleans a rebuild. The
+inside is the same field offset by the wall, which makes the whole thing one watertight tube:
+two rings of vertices per level, quads between the levels, an annulus closing each end.
+
+**Flutes only ever cut inward.** The hem diameter you type is the diameter a caliper reads across
+the finished shade. Rippling symmetrically about the silhouette instead would make every diameter
+control a polite suggestion that the flute depth then argues with — and it is not a cosmetic
+difference, because the hem is the thing that has to pass over a 55 mm shade ring.
+
+**The wall is measured through the wall.** Offsetting straight inward by 1.2 mm is the obvious
+thing and it is wrong wherever the surface is not vertical: on a flank leaning 45 degrees it is
+0.85 mm of material measured *through* the wall, which is the difference between three perimeters
+and two. On a lamp shade the perimeter count is the design — it is what the light has to come
+through — so the offset is divided by the surface's own foreshortening, taken from the local slopes
+in both directions and clamped, because at a creased valley the true offset surface has a cusp and
+wants infinite thickness.
+
+**Printability is one number: how far the wall moves sideways per layer.** The 45-degree overhang
+rule is about *solid* overhangs, where a layer has to span outward over air. A shade is a
+continuous thin wall, and every layer lands on the one below it as long as it has not stepped
+further sideways than the wall is thick. Judged by angle both of this generator's shapes look
+alarming — a 64-rib shade with 160 degrees of twist reports flanks leaning 71 degrees, and the
+default mushroom's bulge leans 44 — and both print perfectly, because the flare and the twist
+together come to 0.35 mm of step inside a 1.2 mm wall. Checking the angle instead would have put
+the reference shape out of reach, which is the whole point: the criterion has to be the one the
+printer actually uses.
+
+**The fitter is a spider, not a disc.** A flange that reached the wall all the way round would be a
+50 mm-wide annulus of solid plastic across the bottom of a 120 mm shade — twenty grams of it, and
+it blanks off most of the light the shade is open at the bottom to let out. Four spokes off a hub
+carry it just as well, which is why a fabric lampshade has used a wire spider for a century. The
+star comes out of the same triangulation the annulus did: one outer radius per angle, out to the
+wall inside a spoke and only as far as the hub between them, so the step between the two becomes
+the spoke's own side wall. Each gap between two spokes is another way through the solid, so the
+shade comes back at genus five rather than one — which is what the test asserts, because a shade
+that came back at genus one would be one whose bottom had been blanked off.
+
+**Hanging an empire shade from its top rim makes a pendant, upside down.** The mushroom is easy:
+its hem is the widest thing about it, so it sits on a collar on the base. The pleated one narrows
+to a small top, and the obvious reading — put the top rim on the shade ring — puts the entire shade
+*below* the ring while the bulb goes up *above* it. The fitter is a flange partway up the inside
+instead: low enough to reach the ring, high enough that the rest of the shade goes on up round the
+bulb. Its aperture only has to clear the thread, not the envelope, because the shade goes on first
+and the bulb screws in from above afterwards — by the time the glass starts widening it is already
+well clear of the flange.
+
+**The joint between the two parts is derived, not typed.** In the base mount the collar takes the
+shade's own hem radius, so the two outer surfaces run flush, and the spigot is sized off the
+shade's *inner* surface so the hem drops over it whatever the flutes are doing. The base's neck
+diameter disappears from the sidebar in that mount, because a number that is being ignored is worse
+than no number. The flange's outer edge follows the fluted surface rather than a circle, three
+quarters of the way out through the wall: a circle would fall short of the crests, and a flange that
+misses the wall at forty angles is a loose disc inside a tube that still unions into a perfectly
+valid solid.
+
+**The bulb is a convex hull, shoulder included.** Cap cylinder, envelope sphere, and the tangent
+between them. Reading only the cap and the sphere tells a narrow shade it clears a bulb it would
+actually be resting against, because the widest part of the glass is not the only part that can
+touch. The clearance is walked over the shade's whole height taking the *narrowest* inner radius at
+each one — a flute valley is where a shade touches a bulb, and averaging round the shade hides
+exactly the contact that matters.
+
+**Clearing the shade ring is a run, not a cross-section.** The ring travels up through the shade's
+inside during assembly, from the hem to wherever it ends up, and the shade has to clear it the whole
+way. Checking only the hem passes a shade that is widest at its hem and closes in above it, which
+then jams halfway on with the two surfaces bearing somewhere nobody can see. It is reported as its
+own number rather than folded into the bulb clearance, because the two are different questions:
+a few millimetres past the ring is plenty, and a few millimetres from a bulb is not.
+
+**The deck is grown inward at 45 degrees rather than bridged** — it is a plate with a hole in it
+printed over thin air, and at 45 degrees every layer lands on the one below. The chamfer has to end
+*on* the inner wall at the radius that wall has where the chamfer reaches it; taking the radius at
+the deck instead is wrong by the taper over the chamfer's own height, and the inner wall then
+doubles back to meet itself. That profile crosses its own edge and revolves into a solid with a
+wedge of extra material buried in the neck — manifold, positive volume, right silhouette, and a
+base that weighs half as much again. A test slices the cone and weighs the ring.
+
+**The presets are proportioned off the reference photos, and one of them cannot be exact.** The
+mushroom reads 0.55 / 1.00 / 0.72 across hem, belly and base, with the joint the narrowest thing
+about the whole object — that waist is what makes it a mushroom rather than a vase on a plinth.
+The pleated one is 120 mm across and 150 mm tall, which is what its reference is labelled. Its base
+comes out chunkier than the photo's for a reason that is not stylistic: an E27 shade ring is 55 mm
+across, so the neck it lands on cannot be under about 60 mm however slender the picture looks. The
+photo's lamp is either using a smaller holder or is not built this way at all. Switching the holder
+to E14 in the sidebar gets the slender base back.
+
+**Use an LED bulb.** PLA starts to soften around 60 degrees and a filament or halogen bulb of the
+same brightness will reach that inside a shade this size. It is the one thing about this lamp that
+is not a matter of taste, so it is a standing warning rather than a line in a manual.
 
 ### Taking it into Fusion 360
 
