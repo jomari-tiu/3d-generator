@@ -1,7 +1,7 @@
 import type { Manifold, ManifoldToplevel } from 'manifold-3d';
-import type { Derived } from '../geometry';
+import { roofAccess, type Derived } from '../geometry';
 import type { Rect } from '../plan';
-import { footprintSection, shellSection } from './shape';
+import { footprintSection, innerCorner, isCorner, shelfClip, shellSection } from './shape';
 import { groove, jointAt, pinSockets } from './storey';
 
 /**
@@ -50,10 +50,37 @@ function slopedHalfspace(
   );
 }
 
-function pitchedRoof(m: ManifoldToplevel, d: Derived): Manifold {
-  const eW = d.W + 2 * d.eaves;
-  const eD = d.D + 2 * d.eaves;
-  const big = 4 * (eW + eD + d.roofZ + 100);
+/** A rectangle of plan, by its bounds. */
+interface Span {
+  readonly x0: number;
+  readonly x1: number;
+  readonly y0: number;
+  readonly y1: number;
+}
+
+/**
+ * A pitched roof over one rectangle of walls, as its outer solid and its
+ * cavity -- kept apart so two of them can be joined before either is hollowed.
+ *
+ * `walls` is the wall line and sets the slopes: the planes hinge one eave out
+ * from it on every side, symmetrically, so the ridge sits on the middle of the
+ * walls. `plan` is how far the roof actually reaches, which on a corner
+ * building is the eave on the open sides and the wall plane, exactly, on the
+ * shelf sides. The chamfered octagon comes in through `section` instead.
+ */
+function pitchedPieces(
+  m: ManifoldToplevel,
+  d: Derived,
+  walls: Span,
+  plan: Span | null,
+): { outer: Manifold; inner: Manifold } {
+  const wW = walls.x1 - walls.x0;
+  const wD = walls.y1 - walls.y0;
+  const cx = (walls.x0 + walls.x1) / 2;
+  const cy = (walls.y0 + walls.y1) / 2;
+  const eW = wW + 2 * d.eaves;
+  const eD = wD + 2 * d.eaves;
+  const big = 4 * (d.W + d.D + 2 * d.eaves + d.roofZ + 100);
   const deg = Math.max(1, Math.min(75, d.pitchDeg));
   // Perpendicular thickness becomes vertical drop through the hinge: a roof
   // roofT thick measured square to the slope sits roofT/cos(pitch) lower.
@@ -61,40 +88,84 @@ function pitchedRoof(m: ManifoldToplevel, d: Derived): Manifold {
 
   // Ridge runs along whichever way the building is longer, which is what any
   // roofer would do and what keeps the ridge height sane on a long plan.
-  const ridgeAlongX = d.W >= d.D;
+  const ridgeAlongX = wW >= wD;
   const slopeAxis = ridgeAlongX ? 'y' : 'x';
   const endAxis = ridgeAlongX ? 'x' : 'y';
+  const slopeC = ridgeAlongX ? cy : cx;
+  const endC = ridgeAlongX ? cx : cy;
   const slopeHalf = (ridgeAlongX ? eD : eW) / 2;
   const endHalf = (ridgeAlongX ? eW : eD) / 2;
 
   const planes = (z: number): Manifold[] => {
     const out = [
-      slopedHalfspace(m, { axis: slopeAxis, hinge: -slopeHalf, side: -1, z, deg, big }),
-      slopedHalfspace(m, { axis: slopeAxis, hinge: slopeHalf, side: 1, z, deg, big }),
+      slopedHalfspace(m, { axis: slopeAxis, hinge: slopeC - slopeHalf, side: -1, z, deg, big }),
+      slopedHalfspace(m, { axis: slopeAxis, hinge: slopeC + slopeHalf, side: 1, z, deg, big }),
     ];
     if (d.roof === 'hip') {
       out.push(
-        slopedHalfspace(m, { axis: endAxis, hinge: -endHalf, side: -1, z, deg, big }),
-        slopedHalfspace(m, { axis: endAxis, hinge: endHalf, side: 1, z, deg, big }),
+        slopedHalfspace(m, { axis: endAxis, hinge: endC - endHalf, side: -1, z, deg, big }),
+        slopedHalfspace(m, { axis: endAxis, hinge: endC + endHalf, side: 1, z, deg, big }),
       );
     }
     return out;
   };
 
-  const prism = (inset: number, zBottom: number): Manifold =>
-    m.Manifold.extrude(footprintSection(m, d, inset - d.eaves), big).translate([0, 0, zBottom]);
-
-  const outer = m.Manifold.intersection([prism(0, d.roofZ), ...planes(d.roofZ)]);
+  const prism = (inset: number, zBottom: number): Manifold => {
+    const section = plan
+      ? m.CrossSection.square([plan.x1 - plan.x0 - 2 * inset, plan.y1 - plan.y0 - 2 * inset]).translate([
+          plan.x0 + inset,
+          plan.y0 + inset,
+        ])
+      : footprintSection(m, d, inset - d.eaves);
+    return m.Manifold.extrude(section, big).translate([0, 0, zBottom]);
+  };
 
   // The cavity. Inset in plan as well as dropped: on a gable there is no end
   // plane to bound it, so without the inset the cavity would run straight out
   // through both ends and leave the roof open like a tunnel.
-  const inner = m.Manifold.intersection([
-    prism(d.roofT, d.roofZ + d.roofT),
-    ...planes(d.roofZ - drop),
-  ]);
+  return {
+    outer: m.Manifold.intersection([prism(0, d.roofZ), ...planes(d.roofZ)]),
+    inner: m.Manifold.intersection([prism(d.roofT, d.roofZ + d.roofT), ...planes(d.roofZ - drop)]),
+  };
+}
 
-  return outer.subtract(inner);
+function pitchedRoof(m: ManifoldToplevel, d: Derived): Manifold {
+  if (!isCorner(d)) {
+    const { outer, inner } = pitchedPieces(
+      m,
+      d,
+      { x0: -d.W / 2, x1: d.W / 2, y0: -d.D / 2, y1: d.D / 2 },
+      null,
+    );
+    return outer.subtract(inner);
+  }
+  // An L is roofed the way a builder roofs one: a roof along each wing, the
+  // two run into each other. Their union is the real thing -- a valley down
+  // the courtyard corner, a hip or a cross gable over the shelf corner -- and
+  // it falls out of the two rectangles with no special case for the join.
+  //
+  // Each reaches its eave on the open sides and stops dead at the shelf: the
+  // slopes are still set out from a symmetrical eave, so the ridge stays on the
+  // middle of the wing, but nothing hangs out over the wall the building has to
+  // go flat against. Stopping the plan rather than clipping afterwards also
+  // keeps the cavity sealed: clipped, the shelf end of the roof would be open.
+  const x = d.W / 2;
+  const y = d.D / 2;
+  const { ix, iy } = innerCorner(d);
+  const e = d.eaves;
+  const backWing = pitchedPieces(
+    m,
+    d,
+    { x0: -x, x1: x, y0: iy, y1: y },
+    { x0: -x, x1: x + e, y0: iy - e, y1: y },
+  );
+  const sideWing = pitchedPieces(
+    m,
+    d,
+    { x0: -x, x1: ix, y0: -y, y1: y },
+    { x0: -x, x1: ix + e, y0: -y - e, y1: y },
+  );
+  return backWing.outer.add(sideWing.outer).subtract(backWing.inner.add(sideWing.inner));
 }
 
 /**
@@ -156,9 +227,8 @@ function flatRoof(m: ManifoldToplevel, d: Derived): Manifold {
 
 /**
  * The rooftop plant room over the core -- a lift overrun, a tank room, a stair
- * bulkhead. Deliberately NOT open to the shaft below: there is no stair from
- * the top floor to climb it, and a hole in the roof with nothing under it is
- * just a hole in the roof.
+ * bulkhead. Open to the shaft below: the top storey's stair climbs up into it
+ * through the deck, and a door in its front lets you out onto the roof.
  */
 function bulkhead(m: ManifoldToplevel, d: Derived, core: Rect, zTop: number): Manifold {
   const w = core.x1 - core.x0 + 2 * d.extT;
@@ -199,7 +269,42 @@ function bulkhead(m: ManifoldToplevel, d: Derived, core: Rect, zTop: number): Ma
     }
     solid = solid.subtract(m.Manifold.union(slots));
   }
+
+  // The way out onto the roof, on the face toward the front -- which on a
+  // corner building is the face over the hall, looking down the terrace.
+  const doorW = Math.min(d.doorW, w - 2 * d.extT - 2 * d.minWall);
+  const head = Math.min(zTop + d.perFt * 7, zTop + tall - d.roofT - Math.max(d.minWall, d.perFt * 0.5));
+  if (doorW >= d.minWall && head - zTop >= d.minWall) {
+    solid = solid.subtract(
+      m.Manifold.cube([doorW, 2 * d.extT + 1, head - zTop + 0.1], true).translate([
+        cx,
+        cy - h / 2 + d.extT / 2,
+        zTop + (head - zTop + 0.1) / 2 - 0.1,
+      ]),
+    );
+  }
   return solid;
+}
+
+/**
+ * Where the penthouse stands in plan, or null when the roof is too small for one.
+ *
+ * Set back far enough to clear the parapet and read as a step, not as a lid
+ * that missed: a penthouse landing on the parapet is one solid with it and the
+ * step disappears. Pushed to the back, so the front of the roof stays a
+ * terrace you can see over the parapet -- which is the whole reason a
+ * penthouse is set back. On a corner building it runs along the back wing,
+ * the full depth of it: the courtyard is the terrace there.
+ */
+export function penthouseSpan(d: Derived): Span | null {
+  const inset = Math.max(d.perFt * 5, d.extT * 3 + d.chamfer * 0.5);
+  const corner = isCorner(d);
+  const y0Wall = corner ? innerCorner(d).iy : -d.D / 2;
+  const w = d.W - 2 * inset;
+  const deep = (d.D / 2 - y0Wall - 2 * inset) * (corner ? 1 : 0.62);
+  if (w < d.perFt * 8 || deep < d.perFt * 8) return null;
+  const y1 = d.D / 2 - inset;
+  return { x0: -w / 2, x1: w / 2, y0: y1 - deep, y1 };
 }
 
 /**
@@ -220,20 +325,12 @@ function penthouse(m: ManifoldToplevel, d: Derived, zTop: number): Manifold | nu
   const h = d.penthouseH;
   if (h < d.perFt * 4) return null;
 
-  // Set back far enough to clear the parapet and read as a step, not as a
-  // lid that missed. A penthouse landing on the parapet is one solid with it
-  // and the step disappears.
-  const inset = Math.max(d.perFt * 5, d.extT * 3 + d.chamfer * 0.5);
-  const w = d.W - 2 * inset;
-  const deep = (d.D - 2 * inset) * 0.62;
-  if (w < d.perFt * 8 || deep < d.perFt * 8) return null;
-
-  // Pushed to the back, so the front of the roof stays a terrace you can see
-  // over the parapet -- which is the whole reason a penthouse is set back.
-  const y1 = d.D / 2 - inset;
-  const y0 = y1 - deep;
-  const cx = 0;
-  const cy = (y0 + y1) / 2;
+  const r = penthouseSpan(d);
+  if (!r) return null;
+  const w = r.x1 - r.x0;
+  const deep = r.y1 - r.y0;
+  const cx = (r.x0 + r.x1) / 2;
+  const cy = (r.y0 + r.y1) / 2;
 
   const lap = Math.min(d.roofT / 2, 0.3);
   const box = m.Manifold.cube([w, deep, h + lap], true).translate([cx, cy, zTop - lap + (h + lap) / 2]);
@@ -260,7 +357,8 @@ function penthouse(m: ManifoldToplevel, d: Derived, zTop: number): Manifold | nu
   return solid;
 }
 
-export function buildRoof(m: ManifoldToplevel, d: Derived, core: Rect | null): Manifold {
+export function buildRoof(m: ManifoldToplevel, d: Derived, core: Rect | null): Manifold | null {
+  if (d.roof === 'none') return null;
   let solid =
     d.roof === 'gable' || d.roof === 'hip' ? pitchedRoof(m, d) : flatRoof(m, d);
 
@@ -269,7 +367,16 @@ export function buildRoof(m: ManifoldToplevel, d: Derived, core: Rect | null): M
     if (block) solid = solid.add(block);
   }
 
-  if (core && d.bulkhead && (d.roof === 'flat' || d.roof === 'parapet')) {
+  if (core && hasBulkhead(d, core)) {
+    // The stair from the top storey comes up through here, so the deck is
+    // opened over the shaft exactly as every slab below it is.
+    solid = solid.subtract(
+      m.Manifold.cube([core.x1 - core.x0, core.y1 - core.y0, d.roofT + 2], true).translate([
+        (core.x0 + core.x1) / 2,
+        (core.y0 + core.y1) / 2,
+        d.roofZ + d.roofT / 2,
+      ]),
+    );
     solid = solid.add(bulkhead(m, d, core, d.roofZ + d.roofT));
   }
 
@@ -284,5 +391,13 @@ export function buildRoof(m: ManifoldToplevel, d: Derived, core: Rect | null): M
     const slot = groove(m, d, d.roofZ);
     if (slot) solid = solid.subtract(slot);
   }
-  return solid;
+  return shelfClip(m, d, solid);
+}
+
+/**
+ * Is there a stair head over the core? Not under a helipad: the pad goes over
+ * the core instead. See roofAccess().
+ */
+export function hasBulkhead(d: Derived, core: Rect | null): boolean {
+  return core !== null && roofAccess(d);
 }

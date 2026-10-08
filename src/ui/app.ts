@@ -533,7 +533,7 @@ export class App {
     // about a big model, not a failure -- what used to happen here was that the
     // second bed's worth of parts was silently dropped from the preview and the
     // export, which is how a drawer came to be missing its drawer.
-    const set = packPlates(result.parts, bed);
+    const set = packPlates(result.parts, bed, this.gen.plateGap);
     this.lastPlates = set;
     this.viewer.setBed(bed[0], bed[1], set.plates.length);
 

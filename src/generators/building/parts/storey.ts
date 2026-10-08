@@ -1,14 +1,24 @@
 import type { CrossSection, Manifold, ManifoldToplevel } from 'manifold-3d';
-import type { Derived } from '../geometry';
+import { roofAccess, type Derived } from '../geometry';
 import type { Door, Plan, Wall } from '../plan';
 import { faceOut, storeyFacade } from './facade';
+import { claddingCutter } from './cladding';
 import {
   cornerPiers,
+  cutAway,
+  faceLen,
+  faceMid,
+  faces,
   footprintSection,
   frontBand,
+  frontFace,
+  innerCorner,
   insideOutline,
+  isCorner,
+  shelfClip,
   shellSection,
   windowCentres,
+  type Face,
 } from './shape';
 import { buildStairs } from './stairs';
 
@@ -53,23 +63,9 @@ const IN = 0.5;
 
 export { windowCentres };
 
-interface Face {
-  /** True when the face is one of the two facing along Y (front and back). */
-  readonly alongX: boolean;
-  /** +1 for the +Y or +X face, -1 for the other. */
-  readonly side: 1 | -1;
-}
-
-const FACES: readonly Face[] = [
-  { alongX: true, side: -1 },
-  { alongX: true, side: 1 },
-  { alongX: false, side: -1 },
-  { alongX: false, side: 1 },
-];
-
 /**
- * A box spanning an exterior wall, given its extent along the face and its z
- * band. The one place the four faces are unified.
+ * A box spanning an exterior wall, given its centre and extent along the face
+ * and its z band. The one place the faces are unified.
  *
  * `outM` and `inM` are how far past the outer and inner faces it reaches: a
  * cutter wants both, so it breaks cleanly through; a mullion wants neither, so
@@ -86,9 +82,8 @@ function faceBox(
   outM: number,
   inM: number,
 ): Manifold {
-  const outer = (face.alongX ? d.D : d.W) / 2;
-  const near = face.side * (outer + outM);
-  const far = face.side * (outer - d.extT - inM);
+  const near = face.at + face.side * outM;
+  const far = face.at - face.side * (d.extT + inM);
   const thick = Math.abs(near - far);
   const mid = (near + far) / 2;
   const h = z1 - z0;
@@ -137,13 +132,13 @@ function mullionFootprints(m: ManifoldToplevel, d: Derived): CrossSection | null
   if (!d.t.mullions || d.mullionPitch <= 0) return null;
   const thick = d.extT + 4;
   const bars: CrossSection[] = [];
-  for (const face of FACES) {
-    const faceLen = face.alongX ? d.W : d.D;
-    const across = ((face.alongX ? d.D : d.W) / 2 - d.extT / 2) * face.side;
-    const avail = faceLen - 2 * d.pier;
+  for (const face of faces(d)) {
+    if (face.blank) continue;
+    const across = face.at - (face.side * d.extT) / 2;
+    const avail = faceLen(face) - 2 * d.pier;
     const n = Math.floor(avail / d.mullionPitch) - 1;
     for (let k = 1; k <= n; k++) {
-      const c = -avail / 2 + (avail * k) / (n + 1);
+      const c = faceMid(face) - avail / 2 + (avail * k) / (n + 1);
       bars.push(
         m.CrossSection.square(
           face.alongX ? [d.mullionT, thick] : [thick, d.mullionT],
@@ -187,11 +182,15 @@ function windowCutters(m: ManifoldToplevel, d: Derived, level: number): Manifold
 
   const out: Manifold[] = [];
   const inM = glazedDepth(d) - d.extT;
-  for (const face of FACES) {
-    // No front wall means no front windows -- there is nothing left to punch.
-    if (d.openFront && face.alongX && face.side === -1) continue;
-    for (const c of windowCentres(d, face.alongX ? d.W : d.D)) {
-      out.push(faceBox(m, d, face, c, d.winW, band.sill, band.head, faceOut(d), inM));
+  for (const face of faces(d)) {
+    // No wall means no windows -- there is nothing left to punch. A shelf
+    // wall has a wall, but the only thing on the other side of it is the wall
+    // of the room the shelf is in.
+    if (face.blank || cutAway(d, face)) continue;
+    for (const c of windowCentres(d, faceLen(face))) {
+      out.push(
+        faceBox(m, d, face, faceMid(face) + c, d.winW, band.sill, band.head, faceOut(d), inM),
+      );
     }
   }
   return out;
@@ -216,7 +215,8 @@ function entranceCutter(m: ManifoldToplevel, d: Derived): Manifold | null {
   // the BACK: a door reads by its reveal, and a leaf flush with the facade has
   // none.
   const inM = d.doorLeaves ? -d.paneT : IN;
-  return faceBox(m, d, FACES[0]!, 0, d.entranceW, floor - 0.1, top, faceOut(d), inM);
+  const front = frontFace(d);
+  return faceBox(m, d, front, faceMid(front), d.entranceW, floor - 0.1, top, faceOut(d), inM);
 }
 
 function partitionSolid(m: ManifoldToplevel, d: Derived, w: Wall, z0: number, h: number): Manifold {
@@ -288,6 +288,27 @@ function doorCutters(m: ManifoldToplevel, d: Derived, dr: Door, floor: number, w
  * model, perfectly manifold, attached to nothing.
  */
 export function pinPositions(d: Derived, level: number): [number, number][] {
+  if (isCorner(d)) {
+    // One at every vertex of the L, on the wall centreline: six walls meet in
+    // six corners, and every one of them is backed by a corner pier even on an
+    // open ground floor.
+    const e = d.extT / 2;
+    const x = d.W / 2;
+    const y = d.D / 2;
+    const { ix, iy } = innerCorner(d);
+    const all: [number, number][] = [
+      [-x + e, -y + e],
+      [ix - e, -y + e],
+      [ix - e, iy + e],
+      [x - e, iy + e],
+      [x - e, y - e],
+      [-x + e, y - e],
+    ];
+    // A cutaway leaves only the shelf walls standing.
+    return d.openFront
+      ? all.filter(([px, py]) => px < -x + d.extT || py > y - d.extT)
+      : all;
+  }
   const onColumns = level === 0 && d.t.ground === 'pilotis' && d.chamfer > 0;
   // On the wall centreline normally, on the COLUMN centreline where the pin
   // has moved onto one -- a column is thicker than the wall it stands in for,
@@ -332,6 +353,9 @@ export function jointAt(d: Derived, level: number): Derived['joint'] {
   // far less of it.
   const pitchedAbove =
     level === d.floors - 1 && (d.roof === 'gable' || d.roof === 'hip');
+  // With no roof the top storey is the top of the model, and a rib round its
+  // wall head would be keying into nothing.
+  if (level === d.floors - 1 && d.roof === 'none') return 'none';
   return openTop || pitchedAbove ? 'pins' : 'tongue';
 }
 
@@ -408,6 +432,12 @@ export function buildStorey(
   const walls = m.Manifold.extrude(shellSection(m, d), wallH).translate([0, 0, floor]);
   let solid = slab.add(walls);
 
+  // The wall finish goes on before anything is cut through the wall, so every
+  // opening, band and column after this cuts or covers the texture the same way
+  // it would cut or cover a real facade.
+  const clad = claddingCutter(m, d, level);
+  if (clad) solid = solid.subtract(clad);
+
   // ----------------------------------------------- 2. the stairwell void
   // Only from the first floor up: the ground slab is the ground, and a hole in
   // it is a hole in the bottom of the model.
@@ -433,7 +463,7 @@ export function buildStorey(
   // Partitions reach past the rooms they divide to tie into whatever they meet,
   // and on a chamfered plan whatever they meet at a corner is fresh air. One
   // intersection with the footprint settles it for every feature at once.
-  if (d.chamfer > 0) {
+  if (d.chamfer > 0 || isCorner(d)) {
     solid = solid.intersect(
       m.Manifold.extrude(footprintSection(m, d), h + 2).translate([0, 0, z0 - 1]),
     );
@@ -497,7 +527,9 @@ export function buildStorey(
 
   // ------------------------------------------------------------ 10. stair
   let hasStair = false;
-  if (plan.core && level < d.floors - 1) {
+  // Every storey climbs to the one above it, and the top one climbs to the
+  // roof when there is a stair head up there to arrive in.
+  if (plan.core && (level < d.floors - 1 || roofAccess(d))) {
     const stair = buildStairs(m, d, plan.core, floor, h, d.levelFt[level]!);
     if (stair) {
       solid = solid.add(stair);
@@ -505,5 +537,5 @@ export function buildStorey(
     }
   }
 
-  return { solid, hasStair };
+  return { solid: shelfClip(m, d, solid), hasStair };
 }

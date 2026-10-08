@@ -21,7 +21,9 @@ Eleven generators so far:
 - **Building miniature** — a scale model building at 1:144 or 1:100, designed in feet and inches: real floor
   slabs, 8-to-10 ft storeys, rooms laid out by plan and a stair core through every floor. Four
   building types to pick from — apartment block, office slab, commercial ribbon, curtain wall —
-  and it prints as a stack of storeys you lift apart to see inside.
+  and it prints as a stack of storeys you lift apart to see inside. It can be an L that fits the
+  inside corner of a shelf, have brick, stone, siding, board-and-batten or precast-panel walls, and
+  carry a helipad, roof garden, plant, water tank or solar panels on its roof — or no roof at all.
 - **Under-desk drawer** — one or two drawers that screw under a desktop with a push-to-open,
   push-to-close latch: a heart cam cut into the underside of the tray and a printed leaf spring in
   a shallow bay beneath it that rides the cam. The whole mechanism lives *under* the tray, so the
@@ -524,6 +526,33 @@ The same table drives the sidebar: a type that gains balconies gains the balcony
 same edit, because `visibleIf` asks the traits rather than naming types by hand. **Windows**
 defaults to *match the building type* and resolves to punched or ribbon from it — the type picks
 the kind of opening, never how big it is. Sizes stay yours.
+
+**Shelf corner.** *Plan shape: shelf corner* makes the building an L: one wing along the back wall
+of a shelf, one along the side wall, and the courtyard between them facing the room. The faces you
+can see are a list (`faces()` in `shape.ts`) rather than "front, back, left, right", so windows,
+mullions, columns and the wall finish all run round the six faces of the L with no special case;
+the two against the shelf are marked blank and get nothing. Anything that stands proud by design —
+a floor band, a base course, the eaves — is trimmed flush with the shelf planes in one cut at the
+end, so the model actually goes into the corner. The core sits in the shelf corner where the wings
+meet, the one place nobody can see into; each wing is then planned as an ordinary rectangle. A
+pitched roof is two roofs, one per wing, run into each other — their union is the real thing, a
+valley down the courtyard corner, with nothing special done at the join. It is built for the
+left-hand corner and mirrored for the right.
+
+**Wall finish** cuts joints into the face: running-bond brick, coursed ashlar, lap siding, board
+and batten, or precast panels jointed on the window bays. A real brick course is 2⅔ in — 0.47 mm at
+1:144, two layers with a sixteenth of a millimetre of mortar between them — so joints are floored
+at two layers across and one nozzle wide, the pattern is enlarged until each brick is at least
+twice its joint, and the app says by how much (2.6× at 1:144) and which scale shows it true (1:48).
+The joints stop short of the lip outside the storey tongue, so a finish cannot break into the groove
+of the storey above.
+
+**On the roof**: a helipad over the core (in place of the plant room, the pad sits where the stair
+comes up), a roof garden with planters and trees, air-handling units on a curb, a timber water tank
+on a five-legged stand, or tilted rows of solar panels. Each goes on the open part of the deck —
+inside the parapet, in front of a penthouse, clear of the plant room — prints with nothing past 45°
+except the tank platform's bridge, and comes out as its own part so it can take its own colour.
+*Roof: none* leaves the top storey open, with nothing keyed onto its wall head.
 
 Everything you type is a **real-world dimension**. Storey heights and room sizes are in feet, wall
 and slab thicknesses in inches, and `derive()` divides by the scale exactly once. At the default

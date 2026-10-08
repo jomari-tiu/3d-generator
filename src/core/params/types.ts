@@ -233,6 +233,12 @@ export interface Generator {
   readonly art?: string;
   readonly params: readonly ParamSpec[];
   readonly groups: readonly ParamGroup[];
+  /**
+   * Millimetres between pieces on the print plate. Defaults to the packer's
+   * 3 mm, which suits small parts; big pieces with walls standing at their
+   * edges want more, so a nozzle travelling past one cannot catch the next.
+   */
+  readonly plateGap?: number;
   /** Font ids this generator needs loaded before build() can run. */
   fontsNeeded?(p: Params): readonly string[];
   /** Image ids this generator needs decoded before build() can run. */

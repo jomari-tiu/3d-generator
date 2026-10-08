@@ -23,20 +23,29 @@ export interface BaseParts {
 
 export function buildBase(ctx: BuildCtx, d: Derived, fontId: string): BaseParts {
   const { m } = ctx;
-  const w = d.W + 2 * d.baseMargin;
-  const h = d.D + 2 * d.baseMargin;
+  // A corner building's plinth has no margin on the shelf sides -- it has to
+  // go into the corner with the building on it -- so it is the building plus
+  // a margin out to the front and the open side, and the courtyard between the
+  // wings is paved by it.
+  const corner = d.shape === 'corner';
+  const w = d.W + (corner ? 1 : 2) * d.baseMargin;
+  const h = d.D + (corner ? 1 : 2) * d.baseMargin;
+  const shift: [number, number] = corner ? [d.baseMargin / 2, -d.baseMargin / 2] : [0, 0];
   const chamfer = Math.min(d.baseT * 0.6, d.baseMargin * 0.4);
 
   // Sits BELOW the model, so the building still stands at z = 0 and every
   // height in the readouts stays a height above ground rather than above a
   // plinth the user may switch off.
-  const plinth = taperedExtrude(
+  let plinth = taperedExtrude(
     m,
     roundedRect(m, w, h, Math.min(2, d.baseMargin * 0.5)),
     d.baseT,
     (w - 2 * chamfer) / w,
     (h - 2 * chamfer) / h,
-  ).translate([0, 0, -d.baseT]);
+  ).translate([shift[0], shift[1], -d.baseT]);
+  // Built for the left-hand corner like the building, and turned the same way.
+  if (d.mirror) plinth = plinth.mirror([1, 0, 0]);
+  const labelX = d.mirror ? -shift[0] : shift[0];
 
   if (d.baseText.length === 0) return { plinth, label: null, labelHeight: 0 };
 
@@ -62,7 +71,7 @@ export function buildBase(ctx: BuildCtx, d: Derived, fontId: string): BaseParts 
       // that merely meets the face it stands on is the loose-shell failure this
       // project has hit more than once.
       .extrude(d.baseRelief + 2 * d.layer)
-      .translate([0, y, -2 * d.layer]);
+      .translate([labelX, y, -2 * d.layer]);
     return { plinth, label, labelHeight: capHeight };
   } catch (err) {
     if (err instanceof EmptyTextError) return { plinth, label: null, labelHeight: 0 };

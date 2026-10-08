@@ -38,6 +38,8 @@ export const buildingGroups: readonly ParamGroup[] = [
 ];
 
 const hasCore = (v: Params) => v.core === true;
+const isCorner = (v: Params) => v.footprint === 'corner';
+const hasDeck = (v: Params) => v.roof === 'flat' || v.roof === 'parapet' || v.roof === 'penthouse';
 const isPitched = (v: Params) => v.roof === 'gable' || v.roof === 'hip';
 const isFlat = (v: Params) => v.roof === 'flat' || v.roof === 'parapet';
 const hasParapet = (v: Params) => v.roof === 'parapet' || v.roof === 'penthouse';
@@ -134,6 +136,15 @@ export const buildingParams: readonly ParamSpec[] = [
   }),
 
   // ------------------------------------------------------------- footprint
+  choice('footprint', 'Plan shape', {
+    group: 'size',
+    default: 'rect',
+    options: [
+      { value: 'rect', label: 'Rectangle — stands anywhere' },
+      { value: 'corner', label: 'Shelf corner — an L with a wing along each wall' },
+    ],
+    help: 'A shelf-corner building fills the inside corner of a shelf: one wing runs along the back wall, one along the side wall, and the courtyard between them faces the room. The two walls against the shelf are left blank and flush, with nothing standing proud of them.',
+  }),
   num('width', 'Width', {
     group: 'size',
     unit: '',
@@ -141,7 +152,7 @@ export const buildingParams: readonly ParamSpec[] = [
     max: 400,
     step: 1,
     default: 48,
-    help: 'Feet, across the front.',
+    help: 'Feet, across the front. On a shelf-corner building, along the back wall.',
   }),
   num('depth', 'Depth', {
     group: 'size',
@@ -150,7 +161,26 @@ export const buildingParams: readonly ParamSpec[] = [
     max: 400,
     step: 1,
     default: 32,
-    help: 'Feet, front to back.',
+    help: 'Feet, front to back. On a shelf-corner building, along the side wall.',
+  }),
+  num('wing', 'Wing depth', {
+    group: 'size',
+    unit: '',
+    min: 10,
+    max: 200,
+    step: 0.5,
+    default: 20,
+    visibleIf: isCorner,
+    help: 'Feet from the shelf wall to the courtyard, for both wings. The stair core sits in the shelf corner where they meet.',
+  }),
+  choice('cornerSide', 'Shelf corner', {
+    group: 'size',
+    default: 'left',
+    visibleIf: isCorner,
+    options: [
+      { value: 'left', label: 'Left — against the back and left walls' },
+      { value: 'right', label: 'Right — against the back and right walls' },
+    ],
   }),
   num('extWall', 'Exterior wall', {
     group: 'size',
@@ -359,8 +389,21 @@ export const buildingParams: readonly ParamSpec[] = [
   }),
 
   // ---------------------------------------------------------------- facade
-  // Every control here belongs to an element only some styles have, so each is
-  // shown by asking the trait table rather than naming styles by hand.
+  choice('cladding', 'Wall finish', {
+    group: 'facade',
+    default: 'smooth',
+    options: [
+      { value: 'smooth', label: 'Smooth — render or paint' },
+      { value: 'brick', label: 'Brick — running bond' },
+      { value: 'stone', label: 'Stone — coursed ashlar blocks' },
+      { value: 'siding', label: 'Lap siding — horizontal boards' },
+      { value: 'batten', label: 'Board and batten — vertical boards' },
+      { value: 'panels', label: 'Precast panels — joints on the window bays' },
+    ],
+    help: 'Cut into the outside of the walls as joints. Real bricks are too small to print at most scales, so a pattern that would be finer than the printer can draw is enlarged until it prints, and the app says by how much.',
+  }),
+  // Every control below belongs to an element only some styles have, so each
+  // is shown by asking the trait table rather than naming styles by hand.
   num('balconyDepth', 'Balcony depth', {
     group: 'facade',
     unit: '',
@@ -481,7 +524,22 @@ export const buildingParams: readonly ParamSpec[] = [
       { value: 'flat', label: 'Flat' },
       { value: 'gable', label: 'Gable' },
       { value: 'hip', label: 'Hipped' },
+      { value: 'none', label: 'None — open top, rooms seen from above' },
     ],
+  }),
+  choice('rooftop', 'On the roof', {
+    group: 'roof',
+    default: 'empty',
+    visibleIf: hasDeck,
+    options: [
+      { value: 'empty', label: 'Nothing — a bare deck' },
+      { value: 'helipad', label: 'Helipad — marked pad over the core' },
+      { value: 'garden', label: 'Roof garden — planters, lawn and trees' },
+      { value: 'plant', label: 'Plant — air-handling units on a curb' },
+      { value: 'watertank', label: 'Water tank — timber tank on a stand' },
+      { value: 'solar', label: 'Solar panels — tilted rows' },
+    ],
+    help: 'Stands on the open part of the deck: in front of a penthouse, clear of the plant room. A helipad goes over the core in place of the plant room. Prints as its own part, so it can take its own colour.',
   }),
   num('parapet', 'Parapet height', {
     group: 'roof',
@@ -525,7 +583,7 @@ export const buildingParams: readonly ParamSpec[] = [
   bool('bulkhead', 'Rooftop plant room', {
     group: 'roof',
     default: true,
-    visibleIf: (v) => isFlat(v) && v.core === true,
+    visibleIf: (v) => isFlat(v) && v.core === true && v.rooftop !== 'helipad',
     help: 'The box over the core — lift overrun, tank room, stair head. It is what stops a flat roof looking like a lid.',
   }),
 
@@ -572,7 +630,16 @@ export const buildingParams: readonly ParamSpec[] = [
 
   // -------------------------------------------------------------- colours
   color('wallColor', 'Walls & floors', { group: 'look', default: '#e6e0d4' }),
-  color('roofColor', 'Roof', { group: 'look', default: '#5b6672' }),
+  color('roofColor', 'Roof', {
+    group: 'look',
+    default: '#5b6672',
+    visibleIf: (v) => v.roof !== 'none',
+  }),
+  color('rooftopColor', 'On the roof', {
+    group: 'look',
+    default: '#6f8a5a',
+    visibleIf: (v) => hasDeck(v) && v.rooftop !== 'empty',
+  }),
   color('baseColor', 'Plinth', {
     group: 'look',
     default: '#2b2f33',

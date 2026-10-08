@@ -44,7 +44,16 @@ const PIN_CLEAR = 0.15;
 
 export type Layout = 'open' | 'rooms' | 'corridor';
 export type Windows = 'none' | 'punched' | 'ribbon';
-export type Roof = 'flat' | 'parapet' | 'penthouse' | 'gable' | 'hip';
+export type Roof = 'flat' | 'parapet' | 'penthouse' | 'gable' | 'hip' | 'none';
+/**
+ * What the plan is: a free-standing rectangle, or an L that fills the inside
+ * corner of a shelf with one wing along each wall.
+ */
+export type Shape = 'rect' | 'corner';
+/** What stands on a flat roof. */
+export type Rooftop = 'empty' | 'helipad' | 'garden' | 'plant' | 'watertank' | 'solar';
+/** What the outside face of the exterior walls is drawn as. */
+export type Cladding = 'smooth' | 'brick' | 'stone' | 'siding' | 'batten' | 'panels';
 export type Stairs = 'none' | 'straight' | 'switchback';
 export type Split = 'single' | 'storeys';
 
@@ -118,6 +127,15 @@ export interface Derived {
   readonly heightFt: number;
 
   // -------------------------------------------------------------- footprint
+  readonly shape: Shape;
+  /**
+   * Model mm from the shelf wall to the courtyard face, the same for both wings
+   * of a corner building. Zero on a rectangle.
+   */
+  readonly wing: number;
+  readonly wingFt: number;
+  /** Built for the left-hand corner, then mirrored into the right-hand one. */
+  readonly mirror: boolean;
   readonly widthFt: number;
   readonly depthFt: number;
   /** Model mm exterior footprint. X is width, Y is depth, the front face is -Y. */
@@ -207,6 +225,10 @@ export interface Derived {
   readonly eaves: number;
   readonly roofT: number;
   readonly bulkhead: boolean;
+  readonly rooftop: Rooftop;
+
+  // --------------------------------------------------------------- cladding
+  readonly cladding: Cladding;
 
   // ----------------------------------------------------------------- output
   readonly split: Split;
@@ -275,6 +297,11 @@ export function derive(p: Params): Derived {
   const depthFt = Number(p.depth);
   const W = ft(widthFt);
   const D = ft(depthFt);
+  const shape: Shape = String(p.footprint) === 'corner' ? 'corner' : 'rect';
+  const wingFt = shape === 'corner' ? Number(p.wing) : 0;
+  // The facade the front elements go on: the whole front of a rectangle, the
+  // courtyard face of the back wing of a corner building.
+  const frontLen = shape === 'corner' ? W - ft(wingFt) : W;
 
   // --- structure. Scaled first, then floored at what the nozzle can lay down.
   const extTRealIn = Number(p.extWall);
@@ -368,9 +395,11 @@ export function derive(p: Params): Derived {
 
     style,
     t,
-    chamfer: t.chamfer ? Math.min(ft(Number(p.chamfer)), Math.min(W, D) / 2 - extT * 2) : 0,
+    // A corner building's outside corners are in the shelf corner or against
+    // its walls, where a chamfer only opens a gap nobody can see into.
+    chamfer: t.chamfer && shape === 'rect' ? Math.min(ft(Number(p.chamfer)), Math.min(W, D) / 2 - extT * 2) : 0,
     balconyD: ft(Number(p.balconyDepth)),
-    balconyW: (W - 2 * extT) * Math.min(0.95, Number(p.balconyWidth) / 100),
+    balconyW: (frontLen - 2 * extT) * Math.min(0.95, Number(p.balconyWidth) / 100),
     railT: Math.max(minWall, inch(6)),
     railH: ft(Number(p.railHeight)),
     bandProj: Math.max(minWall * 0.75, inch(Number(p.bandProjection))),
@@ -407,6 +436,10 @@ export function derive(p: Params): Derived {
     roofZ,
     heightFt: levelFt.reduce((a, b) => a + b, 0),
 
+    shape,
+    wing: ft(wingFt),
+    wingFt,
+    mirror: shape === 'corner' && String(p.cornerSide) === 'right',
     widthFt,
     depthFt,
     W,
@@ -481,6 +514,9 @@ export function derive(p: Params): Derived {
     eaves: ft(Number(p.eaves)),
     roofT: Math.max(slabTScaled, minPlate),
     bulkhead: p.bulkhead === true,
+    rooftop: String(p.rooftop) as Rooftop,
+
+    cladding: String(p.cladding) as Cladding,
 
     split: String(p.split) as Split,
     openFront: p.openFront === true,
@@ -529,4 +565,18 @@ export function rng(seed: number): () => number {
     s = (s * 16807) % 2147483647;
     return (s - 1) / 2147483646;
   };
+}
+
+/**
+ * Does the stair carry on up to the roof?
+ *
+ * Only where there is something for it to arrive in: the stair head over the
+ * core on a flat roof. That box is what makes a roof a terrace you can walk out
+ * onto rather than a lid, so the top storey gets a flight like every other, the
+ * deck is opened over the shaft, and the box gets a door. A helipad takes the
+ * place of the stair head, a penthouse is set out without regard to the core,
+ * and a pitched roof has nowhere to stand -- none of them gets the flight.
+ */
+export function roofAccess(d: Derived): boolean {
+  return d.core && d.bulkhead && (d.roof === 'flat' || d.roof === 'parapet') && d.rooftop !== 'helipad';
 }

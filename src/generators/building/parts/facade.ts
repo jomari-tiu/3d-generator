@@ -1,10 +1,16 @@
-import type { Manifold, ManifoldToplevel } from 'manifold-3d';
+import type { CrossSection, Manifold, ManifoldToplevel } from 'manifold-3d';
 import type { Derived } from '../geometry';
 import {
   bandSection,
   cornerPiers,
+  faceLen,
+  faceMid,
+  faces,
   footprintSection,
+  frontFace,
   insideOutline,
+  isCorner,
+  shelfWalls,
   windowCentres,
 } from './shape';
 
@@ -57,6 +63,21 @@ function box(
   ]);
 }
 
+/**
+ * A strip of plan along the front face, `h` deep from `y0`, for keeping just
+ * the front run of something cut right round the building.
+ *
+ * On a rectangle it overshoots both ends, past any chamfer. On a corner
+ * building it starts dead at the courtyard corner: overshoot there and it is
+ * the side wing's courtyard wall it picks up.
+ */
+function frontStrip(m: ManifoldToplevel, d: Derived, y0: number, h: number): CrossSection {
+  const f = frontFace(d);
+  const x0 = isCorner(d) ? f.c0 : f.c0 - d.chamfer - 2;
+  const x1 = f.c1 + d.chamfer + 2;
+  return m.CrossSection.square([x1 - x0, h]).translate([x0, y0]);
+}
+
 /** A ring standing proud of the wall: a floor band, a spandrel, a base course. */
 function bandSolid(m: ManifoldToplevel, d: Derived, z: number, h: number): Manifold {
   return m.Manifold.extrude(bandSection(m, d, d.bandProj), h).translate([0, 0, z]);
@@ -73,11 +94,12 @@ function balcony(m: ManifoldToplevel, d: Derived, z0: number, h: number, work: F
   // Held off the middle of the plan so the recess cannot reach the core and
   // eat the shaft wall the stair needs. It is clamped rather than refused:
   // validate() says what happened, the model stays buildable.
-  const deep = Math.min(d.balconyD, d.D * 0.4);
-  const x0 = -d.W / 2 + d.extT;
+  const deep = Math.min(d.balconyD, balconyLimit(d));
+  const f = frontFace(d);
+  const x0 = f.c0 + d.extT;
   const x1 = x0 + d.balconyW;
 
-  work.lateCut.push(box(m, x0, x1, -d.D / 2 - faceOut(d), -d.D / 2 + deep, floor, top + 0.1));
+  work.lateCut.push(box(m, x0, x1, f.at - faceOut(d), f.at + deep, floor, top + 0.1));
 
   // Wider than the recess at each end, and reaching down into the slab: a
   // balustrade that merely meets the recess it stands in is a loose shell.
@@ -86,27 +108,36 @@ function balcony(m: ManifoldToplevel, d: Derived, z0: number, h: number, work: F
       m,
       x0 - d.tie,
       x1 + d.tie,
-      -d.D / 2,
-      -d.D / 2 + d.railT,
+      f.at,
+      f.at + d.railT,
       floor - 0.2,
       Math.min(floor + d.railH, top),
     ),
   );
 }
 
+/**
+ * How deep a balcony may be recessed: 40% of the depth of whatever it is cut
+ * into, so it cannot reach the stair core -- the whole building, or one wing.
+ */
+export function balconyLimit(d: Derived): number {
+  return (isCorner(d) ? d.wing : d.D) * 0.4;
+}
+
 /** Glazed slots running the full height of a storey, up the front. */
 function stripes(m: ManifoldToplevel, d: Derived, z0: number, h: number, work: FacadeWork): void {
-  const avail = d.W - 2 * d.pier;
+  const f = frontFace(d);
+  const avail = faceLen(f) - 2 * d.pier;
   const n = d.stripeCount;
   const w = Math.min(d.stripeW, avail / n - d.pier);
   if (w <= d.minWall) return;
   // A stripe IS glazing, so it closes with the windows: cut to the pane rather
   // than through, and the slot reads as glass instead of a slot.
-  const back = -d.D / 2 + (d.glazing ? d.extT - d.paneT : d.extT + IN);
+  const back = f.at + (d.glazing ? d.extT - d.paneT : d.extT + IN);
   for (let k = 0; k < n; k++) {
-    const cx = -avail / 2 + (avail * (k + 0.5)) / n;
+    const cx = faceMid(f) - avail / 2 + (avail * (k + 0.5)) / n;
     work.shellCut.push(
-      box(m, cx - w / 2, cx + w / 2, -d.D / 2 - faceOut(d), back, z0 + d.slabT, z0 + h + 0.1),
+      box(m, cx - w / 2, cx + w / 2, f.at - faceOut(d), back, z0 + d.slabT, z0 + h + 0.1),
     );
   }
 }
@@ -132,17 +163,16 @@ function shopfront(
   frontOnly: boolean,
 ): Manifold[] {
   const set = d.shopSet;
+  const f = frontFace(d);
   let ring = footprintSection(m, d, set).subtract(footprintSection(m, d, set + d.shopT));
+  // Nothing behind a shelf wall: it is solid, and a second wall inside it is
+  // a partition across the rooms that no plan asked for.
+  if (isCorner(d)) ring = ring.subtract(shelfWalls(m, d, set + d.shopT + 1));
   if (frontOnly) {
     // Just the front run of the ring, with half a millimetre of slack each
     // side so the intersection cannot leave a hairline of wall behind.
     const band = set + d.shopT + 1;
-    ring = ring.intersect(
-      m.CrossSection.square([d.W + 2 * d.chamfer + 4, band], true).translate([
-        0,
-        -d.D / 2 - 0.5 + band / 2,
-      ]),
-    );
+    ring = ring.intersect(frontStrip(m, d, f.at - 0.5, band));
   }
   if (ring.area() <= 0) return [];
   // Rooted into the slab below, stopping flush with the top of the storey --
@@ -156,10 +186,10 @@ function shopfront(
   if (head - floor < d.minWall) return [wall];
   const doorway = box(
     m,
-    -d.entranceW / 2,
-    d.entranceW / 2,
-    -d.D / 2 - 1,
-    -d.D / 2 + set + d.shopT + 1,
+    faceMid(f) - d.entranceW / 2,
+    faceMid(f) + d.entranceW / 2,
+    f.at - 1,
+    f.at + set + d.shopT + 1,
     floor - 0.3,
     head,
   );
@@ -188,14 +218,8 @@ function pilotis(
   let open = footprintSection(m, d, -out)
     .subtract(footprintSection(m, d, d.extT + IN))
     .subtract(cornerPiers(m, d));
-  if (frontOnly) {
-    open = open.intersect(
-      m.CrossSection.square([d.W + 2 * d.chamfer + 4, d.extT + IN + out], true).translate([
-        0,
-        -d.D / 2 - out + (d.extT + IN + out) / 2,
-      ]),
-    );
-  }
+  const f = frontFace(d);
+  if (frontOnly) open = open.intersect(frontStrip(m, d, f.at - out, d.extT + IN + out));
   if (open.area() <= 0) return;
   work.shellCut.push(m.Manifold.extrude(open, top - floor + 0.1).translate([0, 0, floor]));
 
@@ -227,15 +251,15 @@ function pilotis(
   // every face failed that test: the open ground floor came out as a bare slab
   // with the floors above it standing on nothing.
   const inset = d.colSize / 2;
-  for (const cx of windowCentres(d, d.W)) {
-    post(cx, -d.D / 2 + inset);
-    if (!frontOnly) post(cx, d.D / 2 - inset);
+  for (const face of faces(d)) {
+    if (face.blank || (frontOnly && !face.front)) continue;
+    const line = face.at - face.side * inset;
+    for (const c of windowCentres(d, faceLen(face))) {
+      if (face.alongX) post(faceMid(face) + c, line);
+      else post(line, faceMid(face) + c);
+    }
   }
   if (!frontOnly) {
-    for (const cy of windowCentres(d, d.D)) {
-      post(-d.W / 2 + inset, cy);
-      post(d.W / 2 - inset, cy);
-    }
     // A chamfer eats the corner piers that would otherwise have held the corner
     // up, so the chamfer face gets a column of its own -- which is what the
     // buildings this is modelled on actually do. Set back along the diagonal
@@ -274,8 +298,9 @@ function signBoard(d: Derived): Board | null {
   // leaves a front face a few feet wide, and a board clamped only at the left
   // runs straight off the right-hand chamfer instead.
   const edge = Math.max(d.pier, d.chamfer + d.minWall);
-  const x0 = -d.W / 2 + edge;
-  const w = Math.min(d.signW, d.W - 2 * edge);
+  const f = frontFace(d);
+  const x0 = f.c0 + edge;
+  const w = Math.min(d.signW, faceLen(f) - 2 * edge);
   // Four border widths is the floor: below it the frame has eaten the face it
   // was supposed to be framing, and the board reads as a solid lump.
   const frame = Math.min(d.signFrame, w / 5);
@@ -317,8 +342,8 @@ function sign(
   // most of its height, so a panel that merely bit into the face would be
   // hanging off the two spandrels it happened to cross. Filling the opening
   // also makes the bay read blind, which is what a wall behind a hoarding is.
-  const back = -d.D / 2 + d.extT;
-  const front = -d.D / 2;
+  const front = frontFace(d).at;
+  const back = front + d.extT;
 
   // Where the run ends. A tall building carries two boards -- a big one over
   // the middle floors and a smaller one above it -- which is what a corner
@@ -354,23 +379,25 @@ function sign(
 function canopy(m: ManifoldToplevel, d: Derived, work: FacadeWork): void {
   const z0 = d.levelZ[0]!;
   const floor = z0 + d.slabT;
-  const w = Math.min(d.canopyW, d.W - 2 * d.pier);
+  const f = frontFace(d);
+  const w = Math.min(d.canopyW, faceLen(f) - 2 * d.pier);
   const deep = d.canopyD;
   if (w <= d.minWall || deep <= d.minWall) return;
 
-  const yOuter = -d.D / 2 - deep;
+  const mid = faceMid(f);
+  const yOuter = f.at - deep;
   const zTop = Math.min(floor + d.entranceH + d.perFt, z0 + d.levelH[0]! - d.canopyT);
 
   work.add.push(
     // Apron, overlapping the building slab so the two are one body.
-    box(m, -w / 2, w / 2, yOuter, -d.D / 2 + d.extT, z0, z0 + d.slabT),
+    box(m, mid - w / 2, mid + w / 2, yOuter, f.at + d.extT, z0, z0 + d.slabT),
     // The canopy itself, biting into the wall.
-    box(m, -w / 2, w / 2, yOuter, -d.D / 2 + d.extT * 0.5, zTop, zTop + d.canopyT),
+    box(m, mid - w / 2, mid + w / 2, yOuter, f.at + d.extT * 0.5, zTop, zTop + d.canopyT),
   );
 
   const post = d.colSize * 0.7;
   for (const sx of [-1, 1]) {
-    const cx = (sx * (w / 2 - post)) as number;
+    const cx = mid + sx * (w / 2 - post);
     work.add.push(
       box(
         m,

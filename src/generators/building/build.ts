@@ -6,8 +6,11 @@ import { missingCharacters } from '../../core/text/textSolid';
 import { derive, ftIn, IN_MM, STANDARD_SCALES, type Derived } from './geometry';
 import { depth, makePlan, width, type Plan } from './plan';
 import { buildBase } from './parts/base';
+import { claddingSize, claddingTooThin } from './parts/cladding';
+import { balconyLimit } from './parts/facade';
 import { buildRoof } from './parts/roof';
-import { windowCentres } from './parts/shape';
+import { buildRooftop, flatDeck, ROOFTOP_LABEL, ROOFTOP_MIN_FT, rooftopFits } from './parts/rooftop';
+import { faceLen, faces, frontFace, windowCentres } from './parts/shape';
 import { buildStorey } from './parts/storey';
 import { risersFor, stairFit } from './parts/stairs';
 import { buildingGroups, buildingParams } from './schema';
@@ -33,10 +36,17 @@ import { buildingGroups, buildingParams } from './schema';
 const SLIVER = 0.05;
 
 /**
+ * Millimetres between pieces on the plate. A storey is a big piece with walls
+ * standing right at its edges, and at the packer's usual 3 mm two of them read
+ * as one -- and a nozzle travelling past one wall can catch the next.
+ */
+const PLATE_GAP = 10;
+
+/**
  * How many plates `count` parts of this size need, or Infinity when one will
  * not fit at all.
  *
- * Mirrors packPlate's shelf packing -- 5 mm margins, 3 mm gaps -- rather than
+ * Mirrors packPlate's shelf packing -- 5 mm margins, PLATE_GAP gaps -- rather than
  * comparing areas. Area says four 146 x 98 mm storeys fit a 256 mm bed with
  * room to spare; the shelf packer, correctly, gets two on and leaves two off.
  */
@@ -46,7 +56,7 @@ function platesFor(
   partD: number,
   count: number,
 ): number {
-  const gap = 3;
+  const gap = PLATE_GAP;
   const usableX = bed[0] - 10;
   const usableY = bed[1] - 10;
   if (partW > usableX || partD > usableY) return Infinity;
@@ -88,6 +98,27 @@ function validate(p: Params): Issue[] {
       paramIds: ['width', 'depth', 'extWall'],
     });
     return issues;
+  }
+  if (d.shape === 'corner') {
+    // The courtyard is what makes it an L. Wings that meet across it leave a
+    // rectangle with a notch the width of a corridor cut out of it.
+    const narrow = Math.min(d.widthFt, d.depthFt);
+    if (d.wingFt > narrow - 6) {
+      issues.push({
+        level: 'error',
+        message: `Wings ${ftIn(d.wingFt)} deep on a ${d.widthFt} x ${d.depthFt} ft building leave under 6 ft of courtyard between them — that is a rectangle, not an L. Make the wings shallower or the building bigger.`,
+        paramIds: ['wing', 'width', 'depth'],
+      });
+      return issues;
+    }
+    if (d.wing - 2 * d.extT < 4 * d.minWall) {
+      issues.push({
+        level: 'error',
+        message: 'The walls of each wing meet in the middle — there is no inside to the wings. Make the wings deeper or the walls thinner.',
+        paramIds: ['wing', 'extWall'],
+      });
+      return issues;
+    }
   }
 
   // --- storey height as a real building
@@ -147,7 +178,10 @@ function validate(p: Params): Issue[] {
         paramIds: ['winSill', 'winHeight', 'floorHeight'],
       });
     }
-    if (d.windows === 'punched' && windowCentres(d, d.W).length === 0 && windowCentres(d, d.D).length === 0) {
+    if (
+      d.windows === 'punched' &&
+      faces(d).every((f) => f.blank || windowCentres(d, faceLen(f)).length === 0)
+    ) {
       issues.push({
         level: 'warn',
         message: 'No window fits between the corner piers on any face, so the walls have come out blank. Narrow the windows or widen the building.',
@@ -183,7 +217,8 @@ function validate(p: Params): Issue[] {
       paramIds: ['doorLeaves', 'partition', 'scale'],
     });
   }
-  if (d.entrance && !d.openFront && d.entranceW > d.W - 4 * d.extT) {
+  const frontLen = faceLen(frontFace(d));
+  if (d.entrance && !d.openFront && d.entranceW > frontLen - 4 * d.extT) {
     issues.push({
       level: 'error',
       message: 'The entrance is nearly as wide as the building — there is no wall left either side of it.',
@@ -199,14 +234,15 @@ function validate(p: Params): Issue[] {
   }
 
   // --- the facade this style asked for
-  if (d.t.balconies && d.balconyD > d.D * 0.4) {
+  if (d.t.balconies && d.balconyD > balconyLimit(d)) {
+    const what = d.shape === 'corner' ? `${ftIn(d.wingFt)} deep wing` : `${d.depthFt} ft deep building`;
     issues.push({
       level: 'warn',
-      message: `A ${ftIn(d.balconyD / d.perFt)} balcony is more than 40% of a ${d.depthFt} ft deep building, so it has been held to ${ftIn((d.D * 0.4) / d.perFt)} — any deeper and the recess reaches the stair core.`,
-      paramIds: ['balconyDepth', 'depth'],
+      message: `A ${ftIn(d.balconyD / d.perFt)} balcony is more than 40% of a ${what}, so it has been held to ${ftIn(balconyLimit(d) / d.perFt)} — any deeper and the recess reaches the stair core.`,
+      paramIds: ['balconyDepth', d.shape === 'corner' ? 'wing' : 'depth'],
     });
   }
-  if (d.t.stripes && d.stripeCount * (d.stripeW + d.pier) > d.W - 2 * d.pier) {
+  if (d.t.stripes && d.stripeCount * (d.stripeW + d.pier) > frontLen - 2 * d.pier) {
     issues.push({
       level: 'warn',
       message: `${d.stripeCount} stripes ${ftIn(d.stripeW / d.perFt)} wide do not fit across a ${d.widthFt} ft front with piers between them, so they are being narrowed. Use fewer, or a wider building.`,
@@ -221,7 +257,7 @@ function validate(p: Params): Issue[] {
     });
   }
   if (d.t.ground === 'pilotis' || d.t.ground === 'frontPilotis') {
-    if (windowCentres(d, d.W).length === 0) {
+    if (windowCentres(d, frontLen).length === 0) {
       issues.push({
         level: 'warn',
         message: 'The open ground floor has no columns under it: the window spacing leaves no bay to stand one on. Reduce the window spacing.',
@@ -262,6 +298,36 @@ function validate(p: Params): Issue[] {
     issues.push({ level: 'warn', message: note, paramIds: ['rooms', 'minRoom', 'coreWidth', 'coreDepth'] });
   }
 
+  // --- what stands on the roof
+  if (flatDeck(d) && d.rooftop !== 'empty' && !rooftopFits(d, plan.core)) {
+    issues.push({
+      level: 'warn',
+      message: `A ${ROOFTOP_LABEL[d.rooftop].toLowerCase()} needs about ${ROOFTOP_MIN_FT[d.rooftop]} ft of open deck across, and this roof does not have it once the parapet${d.roof === 'penthouse' ? ', the penthouse' : ''} and the plant room are allowed for. It has been left off. A bigger building, or a plain parapet roof, makes room.`,
+      paramIds: ['rooftop', 'roof', 'width', 'depth'],
+    });
+  }
+
+  // --- the wall finish, and what the printer made of it
+  if (claddingTooThin(d)) {
+    issues.push({
+      level: 'warn',
+      message: `A ${d.extT.toFixed(2)} mm wall has no room to cut joints into without breaking into the storey joint, so the walls have been left smooth. Thicker walls, or a larger scale, take the finish.`,
+      paramIds: ['cladding', 'extWall', 'scale'],
+    });
+  }
+  const clad = claddingSize(d);
+  if (clad && clad.blowup > 1.05) {
+    const trueAt = STANDARD_SCALES.filter((n) => n < d.scale)
+      .reverse()
+      .find((n) => (claddingSize(d, n)?.blowup ?? Infinity) <= 1.05);
+    const what = clad.courseTrue > 0 ? `a ${clad.label} course is ${clad.courseTrue.toFixed(2)} mm` : `a ${clad.label} is too narrow`;
+    issues.push({
+      level: 'warn',
+      message: `At 1:${d.scale} ${what} — finer than a ${d.layer} mm layer and a ${d.nozzle} mm nozzle can draw a joint round — so the pattern is drawn ${clad.blowup.toFixed(1)} times real size to keep its joints printable.${trueAt ? ` At 1:${trueAt} it prints true to scale.` : ''}`,
+      paramIds: ['cladding', 'scale'],
+    });
+  }
+
   // --- stairs
   if (plan.core && d.stairs !== 'none') {
     const fit = stairFit(d, plan.core, d.levelFt[0]!);
@@ -299,7 +365,7 @@ function validate(p: Params): Issue[] {
   const pitched = d.roof === 'gable' || d.roof === 'hip';
   const partW = pitched ? d.W + 2 * d.eaves : d.W + 2 * d.bandProj;
   const partD = pitched ? d.D + 2 * d.eaves : d.D + 2 * d.bandProj;
-  const pieces = d.split === 'storeys' ? d.floors + 1 : 1;
+  const pieces = d.split === 'storeys' ? d.floors + (d.roof === 'none' ? 0 : 1) : 1;
   const plates = platesFor(d.bed, partW, partD, pieces);
 
   if (plates === Infinity) {
@@ -346,6 +412,15 @@ function overallSize(parts: readonly Part[]): [number, number, number] | null {
   return [max[0]! - min[0]!, max[1]! - min[1]!, max[2]! - min[2]!];
 }
 
+const CLADDING_WORDS: Readonly<Record<Derived['cladding'], string>> = {
+  smooth: '',
+  brick: 'brick walls',
+  stone: 'ashlar stone walls',
+  siding: 'lap siding',
+  batten: 'board and batten',
+  panels: 'precast panels',
+};
+
 function readouts(d: Derived, plan: Plan, parts: readonly Part[] = []): Record<string, string> {
   const m2 = (ft: number) => (ft * 0.3048).toFixed(1);
   // What was BUILT, not what the style nominally has. A cutaway takes the front
@@ -354,6 +429,7 @@ function readouts(d: Derived, plan: Plan, parts: readonly Part[] = []): Record<s
   // not there.
   const flat = d.roof === 'flat' || d.roof === 'parapet';
   const front = !d.openFront;
+  const clad = claddingSize(d);
   const facade = [
     front && d.t.balconies ? 'balconies' : '',
     d.t.bands === 'floor' ? 'floor bands' : d.t.bands === 'spandrel' ? 'spandrels' : '',
@@ -370,9 +446,16 @@ function readouts(d: Derived, plan: Plan, parts: readonly Part[] = []): Record<s
     d.doorLeaves ? 'hung doors' : '',
     front && d.t.sign ? 'framed blank billboard' : '',
     front && d.t.canopy ? 'entrance canopy' : '',
-    d.t.tower && d.bulkhead && flat && plan.core ? 'stair tower' : '',
+    d.t.tower && d.bulkhead && flat && plan.core && d.rooftop !== 'helipad' ? 'stair tower' : '',
     d.roof === 'penthouse' ? 'rooftop penthouse' : '',
     d.t.screen && (d.roof === 'parapet' || d.roof === 'penthouse') ? 'louvred parapet' : '',
+    clad
+      ? `${CLADDING_WORDS[d.cladding]}${clad.blowup > 1.05 ? ` (drawn ${clad.blowup.toFixed(1)}x real size)` : ''}`
+      : '',
+    flatDeck(d) && d.rooftop !== 'empty' && rooftopFits(d, plan.core)
+      ? ROOFTOP_LABEL[d.rooftop].toLowerCase()
+      : '',
+    d.roof === 'none' ? 'open top' : '',
   ].filter(Boolean);
 
   const out: Record<string, string> = {
@@ -382,7 +465,7 @@ function readouts(d: Derived, plan: Plan, parts: readonly Part[] = []): Record<s
     // and whichever one you think in, the other number is the one you cannot
     // do in your head.
     Scale: `1:${d.scale} — 1 ft = ${d.perFt.toFixed(2)} mm, 1 m = ${(1000 / d.scale).toFixed(2)} mm`,
-    Building: `${d.widthFt} x ${d.depthFt} ft (${m2(d.widthFt)} x ${m2(d.depthFt)} m), ${d.floors} storey${d.floors === 1 ? '' : 's'}, ${ftIn(d.heightFt)} to the roof`,
+    Building: `${d.widthFt} x ${d.depthFt} ft (${m2(d.widthFt)} x ${m2(d.depthFt)} m)${d.shape === 'corner' ? `, L-shaped for the ${d.mirror ? 'right' : 'left'}-hand shelf corner with ${ftIn(d.wingFt)} wings` : ''}, ${d.floors} storey${d.floors === 1 ? '' : 's'}, ${ftIn(d.heightFt)} to the roof`,
     Model: (() => {
       const box = overallSize(parts);
       const walls = `walls ${d.W.toFixed(1)} x ${d.D.toFixed(1)} x ${d.roofZ.toFixed(1)} mm to the roof deck`;
@@ -410,8 +493,9 @@ function readouts(d: Derived, plan: Plan, parts: readonly Part[] = []): Record<s
   // carrying the model rather than describing it, and because the printed size
   // is not always the real one.
   if (d.t.ground === 'pilotis' || d.t.ground === 'frontPilotis') {
-    const n = windowCentres(d, d.W).length * (d.t.ground === 'pilotis' ? 2 : 1)
-      + (d.t.ground === 'pilotis' ? windowCentres(d, d.D).length * 2 : 0);
+    const n = faces(d)
+      .filter((f) => !f.blank && (d.t.ground === 'pilotis' || f.front))
+      .reduce((sum, f) => sum + windowCentres(d, faceLen(f)).length, 0);
     out['Columns'] = `${n} at ${d.colSize.toFixed(2)} mm square (${ftIn(d.colSize / d.perFt)}), ${d.colH.toFixed(1)} mm clear — ${(d.colH / d.colSize).toFixed(1)} to 1${d.shopfront ? ', braced by the shopfront' : ', unbraced'}`;
   }
   if (plan.core && d.stairs !== 'none' && stairFit(d, plan.core, d.levelFt[0]!).ok) {
@@ -420,13 +504,25 @@ function readouts(d: Derived, plan: Plan, parts: readonly Part[] = []): Record<s
   }
 
   if (d.windows === 'punched') {
-    const front = windowCentres(d, d.W).length;
-    const side = windowCentres(d, d.D).length;
-    out['Windows'] = `${front} front and back, ${side} each side — ${ftIn(d.winW / d.perFt)} x ${ftIn(d.winH / d.perFt)} at ${ftIn(d.pitch / d.perFt)} centres`;
+    const size = `${ftIn(d.winW / d.perFt)} x ${ftIn(d.winH / d.perFt)} at ${ftIn(d.pitch / d.perFt)} centres`;
+    if (d.shape === 'corner') {
+      const n = faces(d)
+        .filter((f) => !f.blank)
+        .reduce((sum, f) => sum + windowCentres(d, faceLen(f)).length, 0);
+      out['Windows'] = `${n} per floor on the four open faces, none on the two shelf walls — ${size}`;
+    } else {
+      const front = windowCentres(d, d.W).length;
+      const side = windowCentres(d, d.D).length;
+      out['Windows'] = `${front} front and back, ${side} each side — ${size}`;
+    }
   }
 
-  const pieces = d.split === 'storeys' ? d.floors + 1 : 1;
-  out['Prints as'] = `${pieces} piece${pieces === 1 ? '' : 's'}${d.base ? ' + plinth' : ''}`;
+  const pieces = d.split === 'storeys' ? d.floors + (d.roof === 'none' ? 0 : 1) : 1;
+  const extra = [
+    flatDeck(d) && d.rooftop !== 'empty' && rooftopFits(d, plan.core) ? 'rooftop' : '',
+    d.base ? 'plinth' : '',
+  ].filter(Boolean);
+  out['Prints as'] = `${pieces} piece${pieces === 1 ? '' : 's'}${extra.map((e) => ` + ${e}`).join('')}`;
   return out;
 }
 
@@ -447,14 +543,24 @@ function build(p: Params, ctx: BuildCtx): BuildResult {
   // the stairwell above it stay over one another.
   const ground = d.groundOpen ? makePlan(d, true) : plan;
 
+  // Everything is built for the left-hand shelf corner; the right-hand one is
+  // its mirror image, taken once here rather than threaded through every part.
+  const place = (s: Manifold): Manifold => (d.mirror ? s.mirror([1, 0, 0]) : s);
+
   const storeys: Manifold[] = [];
   for (let i = 0; i < d.floors; i++) {
-    storeys.push(buildStorey(m, d, i === 0 ? ground : plan, i).solid);
+    storeys.push(place(buildStorey(m, d, i === 0 ? ground : plan, i).solid));
   }
-  const roof = buildRoof(m, d, plan.core);
+  const rawRoof = buildRoof(m, d, plan.core);
+  const roof = rawRoof ? place(rawRoof) : null;
+  // Its own part, so it can take its own colour; trimmed off the roof it is
+  // rooted into, the same way the plinth label is, so the two do not overlap.
+  const rawTop = buildRooftop(m, d, plan.core);
+  const rooftop = rawTop && rawRoof ? place(rawTop.subtract(rawRoof)) : null;
 
   const parts: Part[] = [];
   const wallColor = String(p.wallColor);
+  const roofGroup = d.split === 'single' ? 'building' : 'roof';
 
   if (d.split === 'single') {
     // Grouped with the roof: it is one printed object in two colours, and the
@@ -469,14 +575,16 @@ function build(p: Params, ctx: BuildCtx): BuildResult {
       orientationNote:
         'Prints as it stands, ground floor on the bed. Every window head is a short bridge and every wall leans on the one below it, so it needs no supports — but the rooms inside are sealed once it is printed.',
     });
-    parts.push({
-      id: 'roof',
-      name: 'Roof',
-      mesh: serialize(dropSlivers(m, roof, SLIVER)),
-      color: String(p.roofColor),
-      group: 'building',
-      orientationNote: 'A filament change at this height gives the roof its own colour.',
-    });
+    if (roof) {
+      parts.push({
+        id: 'roof',
+        name: 'Roof',
+        mesh: serialize(dropSlivers(m, roof, SLIVER)),
+        color: String(p.roofColor),
+        group: 'building',
+        orientationNote: 'A filament change at this height gives the roof its own colour.',
+      });
+    }
   } else {
     for (const [i, solid] of storeys.entries()) {
       parts.push({
@@ -494,15 +602,33 @@ function build(p: Params, ctx: BuildCtx): BuildResult {
                 : 'Slab down. Nothing keys it to the storey below, so line it up by eye.',
       });
     }
+    if (roof) {
+      parts.push({
+        id: 'roof',
+        name: 'Roof',
+        mesh: serialize(dropSlivers(m, roof, SLIVER)),
+        color: String(p.roofColor),
+        // Grouped only so the rooftop part stays sitting on it.
+        group: rooftop ? roofGroup : undefined,
+        orientationNote:
+          d.roof === 'gable' || d.roof === 'hip'
+            ? 'Deck down on the bed. The slopes lean inward the whole way, so the shell self-supports and only the ridge bridges.'
+            : 'Deck down on the bed.',
+      });
+    }
+  }
+
+  if (rooftop && d.rooftop !== 'empty') {
     parts.push({
-      id: 'roof',
-      name: 'Roof',
-      mesh: serialize(dropSlivers(m, roof, SLIVER)),
-      color: String(p.roofColor),
+      id: 'rooftop',
+      name: ROOFTOP_LABEL[d.rooftop],
+      mesh: serialize(dropSlivers(m, rooftop, SLIVER)),
+      color: String(p.rooftopColor),
+      group: roofGroup,
       orientationNote:
-        d.roof === 'gable' || d.roof === 'hip'
-          ? 'Deck down on the bed. The slopes lean inward the whole way, so the shell self-supports and only the ridge bridges.'
-          : 'Deck down on the bed.',
+        d.rooftop === 'watertank'
+          ? 'Prints on the roof deck. The tank platform bridges between its legs, so slow the bridging down; a filament change at the deck gives it its own colour.'
+          : 'Prints on the roof deck. A filament change just above the deck gives it its own colour.',
     });
   }
 
@@ -563,6 +689,8 @@ export const buildingGenerator: Generator = {
     'Rooms laid out by plan: subdivided, corridor, or open',
     'Stair core with switchback or straight flights through every floor',
     'Prints as a stack of storeys you can lift apart to see inside',
+    'An L-shaped plan that fits the inside corner of a shelf',
+    'Brick, stone, siding or panel walls; a helipad, garden or plant on the roof',
   ],
   art: `<svg viewBox="0 0 120 96" role="img" aria-hidden="true">
     <defs>
@@ -588,6 +716,7 @@ export const buildingGenerator: Generator = {
     <rect x="14" y="86" width="92" height="6" rx="1.5" fill="#2b2f33"/>
   </svg>`,
   params: buildingParams,
+  plateGap: PLATE_GAP,
   groups: buildingGroups,
   fontsNeeded: (p) =>
     p.base === true && String(p.baseName).trim().length > 0 ? [String(p.baseFont)] : [],
@@ -631,7 +760,18 @@ export const buildingGenerator: Generator = {
         style: 'plain', width: 22, depth: 30, floors: 2, floorHeight: 8.5, layout: 'rooms', rooms: 4,
         minRoom: 8, core: false, roof: 'gable', roofPitch: 38, windows: 'punched',
         winWidth: 3, winPitch: 7, entranceWidth: 3.5, groundOpen: false, balconyWidth: 45,
-        wallColor: '#c98b6b', roofColor: '#4a4038',
+        cladding: 'brick', wallColor: '#c98b6b', roofColor: '#4a4038',
+      },
+    },
+    {
+      // Sized to go four pieces to a plate: three storeys and the roof, each
+      // about 100 x 85 mm at 1:144.
+      label: 'Shelf-corner apartments, 1:144',
+      values: {
+        style: 'apartment', footprint: 'corner', cornerSide: 'left', width: 48, depth: 40, wing: 18,
+        floors: 3, floorHeight: 9, winWidth: 3, winHeight: 4, winPitch: 8, coreWidth: 8, coreDepth: 11,
+        balconyDepth: 5, balconyWidth: 60, roof: 'parapet', parapet: 3, rooftop: 'garden',
+        cladding: 'brick', wallColor: '#b5694f', roofColor: '#8f8a82', rooftopColor: '#5f7d4a',
       },
     },
     {
@@ -640,7 +780,8 @@ export const buildingGenerator: Generator = {
         style: 'office', scale: 200, width: 90, depth: 60, floors: 12, floorHeight: 10, tallGround: true,
         groundHeight: 16, layout: 'corridor', corridorWidth: 6, rooms: 10,
         core: true, coreDepth: 22, windows: 'ribbon', winHeight: 6, winSill: 2.5,
-        roof: 'parapet', wallColor: '#9aa4ad', roofColor: '#3a424b',
+        roof: 'parapet', rooftop: 'helipad', cladding: 'panels',
+        wallColor: '#9aa4ad', roofColor: '#3a424b', rooftopColor: '#c9ccc4',
       },
     },
     {

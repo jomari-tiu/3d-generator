@@ -391,6 +391,7 @@ function lobby(d: Derived, interior: Rect, core: Rect | null, notes: readonly st
  * think to check.
  */
 export function makePlan(d: Derived, openPlan = false): Plan {
+  if (d.shape === 'corner') return cornerPlan(d, openPlan);
   const interior: Rect = {
     x0: -d.innerW / 2,
     y0: -d.innerD / 2,
@@ -422,6 +423,162 @@ export function makePlan(d: Derived, openPlan = false): Plan {
   const leaves = core ? pinwheel(d, interior, core, walls, doors) : [interior];
   const rooms = subdivide(d, leaves, d.roomCount, rnd, walls, doors);
   if (rooms.length < d.roomCount) {
+    notes.push(
+      `Only ${rooms.length} rooms fit at a ${d.minRoomFt} ft minimum, not the ${d.roomCount} asked for.`,
+    );
+  }
+  return { rooms, walls, doors, core, notes };
+}
+
+// ------------------------------------------------------------ corner plan
+
+/** The same plan, moved. Corridor plans are laid out about the origin. */
+function translatePlan(p: Plan, dx: number, dy: number): Plan {
+  const r = (q: Rect): Rect => ({ x0: q.x0 + dx, y0: q.y0 + dy, x1: q.x1 + dx, y1: q.y1 + dy });
+  return {
+    rooms: p.rooms.map(r),
+    walls: p.walls.map((w) =>
+      w.horizontal
+        ? { ...w, at: w.at + dy, from: w.from + dx, to: w.to + dx }
+        : { ...w, at: w.at + dx, from: w.from + dy, to: w.to + dy },
+    ),
+    doors: p.doors.map((o) =>
+      o.horizontal ? { ...o, at: o.at + dy, pos: o.pos + dx } : { ...o, at: o.at + dx, pos: o.pos + dy },
+    ),
+    core: p.core ? r(p.core) : null,
+    notes: p.notes,
+  };
+}
+
+/**
+ * The three clear areas of an L, and the two partitions between them.
+ *
+ * The hub is the square where the wings meet, in the shelf corner; the back
+ * arm runs from it along the back wall, the side arm along the side wall. The
+ * partitions carry the courtyard walls straight on into the building, so the
+ * hub is closed off from each arm on the line the eye already expects.
+ */
+export function cornerAreas(d: Derived): {
+  readonly hub: Rect;
+  readonly back: Rect;
+  readonly side: Rect;
+  readonly toBack: Wall;
+  readonly toSide: Wall;
+} {
+  const t = d.extT;
+  const half = d.partT / 2;
+  const x0 = -d.W / 2 + t;
+  const x1 = d.W / 2 - t;
+  const y0 = -d.D / 2 + t;
+  const y1 = d.D / 2 - t;
+  const ix = -d.W / 2 + d.wing;
+  const iy = d.D / 2 - d.wing;
+  const xc = ix - t / 2;
+  const yc = iy + t / 2;
+  return {
+    hub: { x0, y0: yc + half, x1: xc - half, y1 },
+    back: { x0: xc + half, y0: iy + t, x1, y1 },
+    side: { x0, y0, x1: ix - t, y1: yc - half },
+    toBack: { horizontal: false, at: xc, from: iy + t, to: y1 },
+    toSide: { horizontal: true, at: yc, from: x0, to: ix - t },
+  };
+}
+
+/**
+ * The core, tucked into the shelf corner of the hub.
+ *
+ * That corner is the one place in the building nobody can see into from any
+ * side, which is exactly where a stair and lift shaft belongs -- and it leaves
+ * the rest of the hub an L-shaped hall joining the two arms.
+ */
+function cornerCore(d: Derived, hub: Rect): Rect | null {
+  const hall = Math.max(d.perFt * 4, d.doorW + 2 * jamb(d));
+  const w = Math.min(d.coreW, width(hub) - hall - d.partT);
+  const h = Math.min(d.coreD, depth(hub) - hall - d.partT);
+  if (w < d.perFt * 3 || h < d.perFt * 3) return null;
+  return { x0: hub.x0, y0: hub.y1 - h, x1: hub.x0 + w, y1: hub.y1 };
+}
+
+/** Two walls close the core off from the hall; the shelf walls are the other two. */
+function cornerCoreWalls(d: Derived, c: Rect, hub: Rect, walls: Wall[], doors: Door[]): void {
+  const half = d.partT / 2;
+  const right: Wall = { horizontal: false, at: c.x1 + half, from: c.y0 - d.partT, to: hub.y1 };
+  const front: Wall = { horizontal: true, at: c.y0 - half, from: hub.x0, to: c.x1 + d.partT };
+  walls.push(right, front);
+  const way = door(d, front, (c.x0 + c.x1) / 2);
+  if (way) doors.push(way);
+}
+
+/**
+ * A plan for an L-shaped building in a shelf corner.
+ *
+ * The hub in the corner holds the core and is the hall between the wings; each
+ * arm is planned as a rectangle in its own right, so rooms and corridors work
+ * exactly as they do on a rectangular building. The lobby is the same plan
+ * with the arms left open, keeping its core over the core above.
+ */
+function cornerPlan(d: Derived, openPlan: boolean): Plan {
+  const { hub, back, side, toBack, toSide } = cornerAreas(d);
+  const walls: Wall[] = [];
+  const doors: Door[] = [];
+  const notes: string[] = [];
+  const rnd = rng(d.seed);
+
+  let core: Rect | null = null;
+  if (d.core) {
+    core = cornerCore(d, hub);
+    if (!core) {
+      notes.push(
+        'The wings are too narrow for a core in the corner with a hall beside it, so the core has been left out. Deepen the wings.',
+      );
+    }
+  }
+  if (core) cornerCoreWalls(d, core, hub, walls, doors);
+
+  if (openPlan || d.layout === 'open') {
+    // No partitions between hub and arms: the floor is one L, given as two
+    // rects that tile it exactly.
+    const t = d.extT;
+    const iy = d.D / 2 - d.wing;
+    const backFull: Rect = { x0: hub.x0, y0: iy + t, x1: back.x1, y1: back.y1 };
+    const sideFull: Rect = { x0: side.x0, y0: side.y0, x1: side.x1, y1: iy + t };
+    return { rooms: [backFull, sideFull], walls, doors, core, notes };
+  }
+
+  walls.push(toBack, toSide);
+  for (const [w, r] of [[toBack, back], [toSide, side]] as const) {
+    const want = w.horizontal ? (r.x0 + r.x1) / 2 : (r.y0 + r.y1) / 2;
+    const way = door(d, w, want);
+    if (way) doors.push(way);
+  }
+
+  // The hub is a room -- the hall -- so the arms share what is left.
+  const target = Math.max(2, d.roomCount - 1);
+  const share = area(back) / Math.max(1e-9, area(back) + area(side));
+  const rooms: Rect[] = [hub];
+
+  if (d.layout === 'corridor') {
+    for (const [r, n] of [
+      [back, Math.max(2, Math.round(target * share))],
+      [side, Math.max(2, Math.round(target * (1 - share)))],
+    ] as const) {
+      const cx = (r.x0 + r.x1) / 2;
+      const cy = (r.y0 + r.y1) / 2;
+      const local: Rect = { x0: r.x0 - cx, y0: r.y0 - cy, x1: r.x1 - cx, y1: r.y1 - cy };
+      // The arm's own core is the hub's: a corridor plan asked for one would
+      // park a second shaft at the far end of the spine.
+      const arm = translatePlan(corridorPlan({ ...d, core: false, roomCount: n }, local, rnd), cx, cy);
+      rooms.push(...arm.rooms);
+      walls.push(...arm.walls);
+      doors.push(...arm.doors);
+      notes.push(...arm.notes);
+    }
+    return { rooms, walls, doors, core, notes };
+  }
+
+  const arms = subdivide(d, [back, side], target, rnd, walls, doors);
+  rooms.push(...arms);
+  if (arms.length < target) {
     notes.push(
       `Only ${rooms.length} rooms fit at a ${d.minRoomFt} ft minimum, not the ${d.roomCount} asked for.`,
     );
