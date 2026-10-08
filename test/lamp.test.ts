@@ -14,8 +14,11 @@ import {
 import { baseProfile, baseSolid } from '../src/generators/lamp/parts/base';
 import { baseInnerRadius, baseRadius } from '../src/generators/lamp/geometry';
 import { shadeSolid } from '../src/generators/lamp/parts/shade';
+import { FUSION_SCRIPT_NAME, fusionScript, sectionCount, shadeSections } from '../src/generators/lamp/fusion';
+import { unzipSync, strFromU8 } from 'fflate';
 import { coerceAll, defaultsOf } from '../src/core/params/validate';
 import { segmentsForRadius } from '../src/core/kernel/primitives';
+import { serialize } from '../src/core/kernel/serialize';
 import type { BuildCtx, Params } from '../src/core/params/types';
 
 function ctxFor(m: ManifoldToplevel): BuildCtx {
@@ -387,5 +390,68 @@ describe('table lamp', () => {
     } finally {
       cleanup();
     }
+  });
+
+  // --- the lamp it opens on, and the way out to Fusion -----------------------
+
+  it('opens on the 170 x 120 mm swirl with a 3 mm wall', async () => {
+    const d = derived();
+    expect(d.shadeWall).toBe(3);
+    expect(d.style).toBe('swirl');
+    expect(d.mount).toBe('base');
+    // Measured across the finished shade, not the silhouette the lobes dip in from.
+    const m = await kernel();
+    try {
+      const { bbox } = serialize(shadeSolid(m, derive(paramsWith({ meshDetail: 'normal' }))));
+      expect(bbox.max[0] - bbox.min[0]).toBeGreaterThan(169.5);
+      expect(bbox.max[0] - bbox.min[0]).toBeLessThan(171);
+      expect(bbox.max[2] - bbox.min[2]).toBeCloseTo(120, 6);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('samples the Fusion sections along the flutes, off the preview surface', () => {
+    const d = derived({ meshDetail: 'normal' });
+    const sections = shadeSections(d);
+    expect(sections).toHaveLength(sectionCount(d) + 1);
+    expect(sections[0]!.z).toBe(0);
+    expect(sections.at(-1)!.z).toBeCloseTo(d.shadeH, 9);
+    for (const s of sections) {
+      const spin = d.twistRad * (s.z / d.shadeH);
+      s.outer.forEach(([x, y], j) => {
+        const th = (j / s.outer.length) * TAU - spin;
+        expect(Math.hypot(x, y)).toBeCloseTo(shadeSurface(d, s.z, th), 6);
+        const [xi, yi] = s.inner[j]!;
+        expect(Math.hypot(x, y) - Math.hypot(xi, yi)).toBeGreaterThanOrEqual(d.shadeWall - 1e-6);
+      });
+    }
+    // Sample 0 rides the twist, so the loft joins a rib to the same rib.
+    const top = sections.at(-1)!.outer[0]!;
+    expect(Math.atan2(top[1], top[0])).toBeCloseTo(-d.twistRad, 6);
+  });
+
+  it('bundles the Fusion script with a manifest of the same name', async () => {
+    const m = await kernel();
+    try {
+      for (const patch of [{}, PLEAT]) {
+        const result = lampGenerator.build(paramsWith(patch), ctxFor(m));
+        const fusion = result.vectors?.find((v) => v.id === 'fusion');
+        expect(fusion?.extension).toBe('zip');
+        const data = typeof fusion!.data === 'function' ? fusion!.data() : fusion!.data;
+        const files = unzipSync(data as Uint8Array);
+        const n = FUSION_SCRIPT_NAME;
+        expect(Object.keys(files).sort()).toEqual(['README.txt', `${n}/${n}.manifest`, `${n}/${n}.py`]);
+        expect(JSON.parse(strFromU8(files[`${n}/${n}.manifest`]!)).type).toBe('script');
+        const py = strFromU8(files[`${n}/${n}.py`]!);
+        expect(py).toMatch(/^def run\(context\):/m);
+        expect(py).toContain('MM = 0.1');
+        expect(py).toContain(patch === PLEAT ? 'FLANGE = (' : 'FLANGE = None');
+      }
+    } finally {
+      cleanup();
+    }
+    // Every number is finite: a NaN would be a Python NameError halfway in.
+    expect(fusionScript(derived(), 'Table lamp')).not.toMatch(/NaN|Infinity/);
   });
 });

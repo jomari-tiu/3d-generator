@@ -22,6 +22,11 @@ import { baseInnerRadius, baseRadius, type Derived } from '../geometry';
  *    the spigot takes its inner radius so the hem drops over it.
  */
 export function baseProfile(m: ManifoldToplevel, d: Derived): CrossSection {
+  return m.CrossSection.ofPolygons([baseProfilePoints(d)], 'NonZero');
+}
+
+/** The same section as a plain [radius, height] loop, for exporters that redraw it. */
+export function baseProfilePoints(d: Derived): [number, number][] {
   const pts: [number, number][] = [];
   const rFootIn = Math.min(d.rFootIn, baseInnerRadius(d, d.footH) - 0.4);
 
@@ -73,8 +78,7 @@ export function baseProfile(m: ManifoldToplevel, d: Derived): CrossSection {
     pts.push([baseInnerRadius(d, z), z]);
   }
   pts.push([rFootIn, d.footH]);
-
-  return m.CrossSection.ofPolygons([pts], 'NonZero');
+  return pts;
 }
 
 /**

@@ -903,8 +903,9 @@ export class App {
       const btn = button(v.label, 'btn');
       if (v.title) btn.title = v.title;
       btn.addEventListener('click', () => {
+        const data = typeof v.data === 'function' ? v.data() : v.data;
         download(
-          new Blob([v.data], { type: v.mime }),
+          new Blob([data as BlobPart], { type: v.mime }),
           `${this.baseName()}.${v.extension}`,
           v.mime,
         );

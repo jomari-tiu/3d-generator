@@ -15,7 +15,8 @@ Eleven generators so far:
 - **Table lamp** — a two-part table lamp built round a threaded E27 holder: a cone base the
   socket clamps to, and a fluted shade that either sits on it or hangs from the shade ring. Swirled
   mushroom or pleated empire, from the same surface. It checks the bulb you name clears the inside
-  of the shade at every height.
+  of the shade at every height. Opens on a swirled mushroom 170 mm across and 120 mm tall with a
+  3 mm wall, and exports a **Fusion 360 script** that rebuilds the lamp as editable solids.
 - **Key clicker** — a row of keyboard keys on a keychain. Spell anything, press them, they click.
 - **Building miniature** — a scale model building at 1:144 or 1:100, designed in feet and inches: real floor
   slabs, 8-to-10 ft storeys, rooms laid out by plan and a stair core through every floor. Four

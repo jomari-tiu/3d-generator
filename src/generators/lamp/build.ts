@@ -8,6 +8,7 @@ import {
   ringClearance,
   type Derived,
 } from './geometry';
+import { fusionBundle } from './fusion';
 import { baseSolid } from './parts/base';
 import { shadeSolid } from './parts/shade';
 import { lampGroups, lampParams } from './schema';
@@ -259,7 +260,22 @@ function build(p: Params, ctx: BuildCtx): BuildResult {
     });
   }
 
-  return { parts, issues, readouts: readouts(d, grams) };
+  return {
+    parts,
+    issues,
+    readouts: readouts(d, grams),
+    vectors: [
+      {
+        id: 'fusion',
+        label: 'Fusion 360',
+        extension: 'zip',
+        mime: 'application/zip',
+        title:
+          'A Fusion 360 script that rebuilds the lamp as editable solids - a revolved base and a lofted shade, sketches and all. Unzip, then Utilities > Scripts and Add-Ins > + > Script or add-in from device.',
+        data: () => fusionBundle(d, 'Table lamp'),
+      },
+    ],
+  };
 }
 
 export const lampGenerator: Generator = {
@@ -300,6 +316,22 @@ export const lampGenerator: Generator = {
   build,
   presets: [
     {
+      // The defaults: the swirled mushroom at 170 mm across and 120 mm tall,
+      // with a 3 mm wall, measured across the finished shade the way a caliper
+      // would: the lobes dip in from the silhouette, so the silhouette itself is
+      // a few mm wider. The top is opened up to 88 mm so the shade clears its
+      // bulb with room to spare, and the bulge is whatever lands the measured
+      // width on 170.
+      label: 'Swirl 170 x 120, 3 mm wall',
+      values: {
+        shadeStyle: 'swirl', mount: 'auto',
+        shadeHeight: 120, shadeBottomDia: 94, shadeTopDia: 88, bulge: 41.5, bulgeAt: 48,
+        shadeWall: 3, baseDia: 122, baseHeight: 80,
+        flutes: 64, fluteDepth: 1.4, twist: 160, lobes: 3, lobeDepth: 4,
+        bulbType: 'g45',
+      },
+    },
+    {
       // Proportioned off the reference photo: the shade is the lamp and the
       // base is a modest cone under it. Hem, belly and base read as 0.55, 1.00
       // and 0.72 of the widest point, and the joint is the narrowest thing
@@ -309,7 +341,7 @@ export const lampGenerator: Generator = {
       values: {
         shadeStyle: 'swirl', mount: 'auto',
         shadeHeight: 120, shadeBottomDia: 82, shadeTopDia: 66, bulge: 38, bulgeAt: 48,
-        baseDia: 108, baseHeight: 70,
+        shadeWall: 1.2, baseDia: 108, baseHeight: 70,
         flutes: 64, fluteDepth: 1.2, twist: 160, lobes: 3, lobeDepth: 3.6,
         bulbType: 'a60',
       },
@@ -322,7 +354,7 @@ export const lampGenerator: Generator = {
       label: 'Pleated empire',
       values: {
         shadeStyle: 'pleat', mount: 'auto',
-        shadeHeight: 82, shadeBottomDia: 120, shadeTopDia: 58, bulge: 0,
+        shadeHeight: 82, shadeBottomDia: 120, shadeTopDia: 58, bulge: 0, shadeWall: 1.2,
         seatHeight: 12, baseDia: 76, baseHeight: 72, baseTopDia: 62,
         flutes: 44, fluteDepth: 3.6, crease: 85, twist: 0,
         bulbType: 'g45',
@@ -332,7 +364,7 @@ export const lampGenerator: Generator = {
       label: 'Smooth cone, no flutes',
       values: {
         shadeStyle: 'swirl', flutes: 0, lobes: 0, bulge: 0,
-        shadeHeight: 100, shadeBottomDia: 96, shadeTopDia: 70, twist: 0,
+        shadeHeight: 100, shadeBottomDia: 96, shadeTopDia: 70, twist: 0, shadeWall: 1.2,
         baseDia: 108, baseHeight: 70, bulbType: 'g45',
       },
     },
@@ -340,7 +372,7 @@ export const lampGenerator: Generator = {
       label: 'Tall swirl, deep lobes',
       values: {
         shadeStyle: 'swirl', shadeHeight: 150, shadeBottomDia: 90, shadeTopDia: 56,
-        bulge: 46, bulgeAt: 38, baseDia: 120, baseHeight: 82,
+        bulge: 46, bulgeAt: 38, shadeWall: 1.2, baseDia: 120, baseHeight: 82,
         flutes: 96, fluteDepth: 0.9, twist: 300, lobes: 5, lobeDepth: 5,
         bulbType: 'a60',
       },

@@ -61,7 +61,7 @@ export const lampParams: readonly ParamSpec[] = [
     min: 40,
     max: 300,
     step: 1,
-    default: 82,
+    default: 94,
     help: 'Across the open bottom. In the base mount this also sets the base’s collar, so the two run flush.',
   }),
   num('shadeTopDia', 'Top diameter', {
@@ -70,7 +70,7 @@ export const lampParams: readonly ParamSpec[] = [
     min: 20,
     max: 260,
     step: 1,
-    default: 66,
+    default: 88,
     help: 'Across the top opening, which is how the heat gets out.',
   }),
   num('bulge', 'Bulge', {
@@ -79,7 +79,7 @@ export const lampParams: readonly ParamSpec[] = [
     min: 0,
     max: 60,
     step: 0.5,
-    default: 38,
+    default: 41.5,
     help: 'How far the middle swells past the straight taper. Zero is a plain cone; this is what makes a mushroom.',
   }),
   num('bulgeAt', 'Bulge height', {
@@ -97,7 +97,7 @@ export const lampParams: readonly ParamSpec[] = [
     min: 0.6,
     max: 4,
     step: 0.1,
-    default: 1.2,
+    default: 3,
     help: 'Measured through the wall, not across the radius. This is the control that decides how the lamp glows.',
   }),
   num('seatHeight', 'Fitter height', {
@@ -136,7 +136,7 @@ export const lampParams: readonly ParamSpec[] = [
     min: 40,
     max: 260,
     step: 1,
-    default: 108,
+    default: 122,
   }),
   num('baseHeight', 'Base height', {
     group: 'base',
@@ -144,7 +144,7 @@ export const lampParams: readonly ParamSpec[] = [
     min: 25,
     max: 220,
     step: 1,
-    default: 70,
+    default: 80,
     help: 'To the deck the holder clamps to. The bulb starts just above it, so this is most of what decides whether the bulb ends up inside the shade.',
   }),
   num('baseTopDia', 'Neck diameter', {
@@ -208,7 +208,7 @@ export const lampParams: readonly ParamSpec[] = [
     min: 0,
     max: 8,
     step: 0.1,
-    default: 1.2,
+    default: 1.4,
     help: 'Cut inward from the silhouette, so the diameters above stay the diameters you measure.',
   }),
   num('crease', 'Crease', {
@@ -244,7 +244,7 @@ export const lampParams: readonly ParamSpec[] = [
     min: 0,
     max: 20,
     step: 0.2,
-    default: 3.6,
+    default: 4,
     visibleIf: isSwirl,
   }),
 
@@ -302,7 +302,7 @@ export const lampParams: readonly ParamSpec[] = [
   // ------------------------------------------------------------------- bulb
   choice('bulbType', 'Bulb', {
     group: 'bulb',
-    default: 'a60',
+    default: 'g45',
     options: [
       { value: 'g45', label: 'G45 golf ball - 45 x 78' },
       { value: 'a60', label: 'A60 standard - 60 x 110' },

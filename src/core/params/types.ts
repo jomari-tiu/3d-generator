@@ -193,7 +193,11 @@ export interface VectorExport {
   readonly mime: string;
   /** Button tooltip, for saying what the format is actually good for. */
   readonly title?: string;
-  readonly data: string;
+  /**
+   * The file itself, or a function that makes it. A function is only called
+   * when the button is pressed, for exports too heavy to write on every rebuild.
+   */
+  readonly data: string | Uint8Array | (() => string | Uint8Array);
 }
 
 export interface BuildCtx {
