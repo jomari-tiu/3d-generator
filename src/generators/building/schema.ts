@@ -39,9 +39,10 @@ export const buildingGroups: readonly ParamGroup[] = [
 
 const hasCore = (v: Params) => v.core === true;
 const isCorner = (v: Params) => v.footprint === 'corner';
-const hasDeck = (v: Params) => v.roof === 'flat' || v.roof === 'parapet' || v.roof === 'penthouse';
+const hasDeck = (v: Params) =>
+  v.roof === 'flat' || v.roof === 'parapet' || v.roof === 'penthouse' || v.roof === 'railing';
 const isPitched = (v: Params) => v.roof === 'gable' || v.roof === 'hip';
-const isFlat = (v: Params) => v.roof === 'flat' || v.roof === 'parapet';
+const isFlat = (v: Params) => v.roof === 'flat' || v.roof === 'parapet' || v.roof === 'railing';
 const hasParapet = (v: Params) => v.roof === 'parapet' || v.roof === 'penthouse';
 const hasRooms = (v: Params) => v.layout !== 'open';
 
@@ -58,6 +59,10 @@ const trait = (v: Params) => traitsOf(String(v.style));
 const windowKind = (v: Params) =>
   String(v.windows) === 'auto' ? trait(v).windows : String(v.windows);
 
+/** What `Ground floor: match the building type` comes out as. */
+const groundKind = (v: Params) =>
+  String(v.groundFloor) === 'auto' ? trait(v).ground : String(v.groundFloor);
+
 export const buildingParams: readonly ParamSpec[] = [
   // ------------------------------------------------------ design & storeys
   choice('style', 'Building type', {
@@ -65,15 +70,17 @@ export const buildingParams: readonly ParamSpec[] = [
     default: 'office',
     // The value is the architecture, not the paint: each of these switches a
     // different set of facade elements on. See styles.ts.
-    options: (['apartment', 'office', 'ribbon', 'curtain', 'plain'] as Style[])
+    options: (['apartment', 'office', 'commercial', 'ribbon', 'curtain', 'modern', 'plain'] as Style[])
       .filter((id) => id in STYLES)
       .map((id) => ({
         value: id,
         label: {
           apartment: 'Apartment block — balconies, stair tower, open ground floor',
           office: 'Office slab — banded glazing and floor lines',
-          ribbon: 'Commercial — ribbons round a chamfered corner, on columns',
+          commercial: 'Commercial — shops and sign boards, framed windows, cornice, rooftop billboard',
+          ribbon: 'Ribbon block — ribbons round a chamfered corner, on columns',
           curtain: 'Curtain wall — glazed stripes, stone base, entrance canopy',
+          modern: 'Modern — paned windows, glazed shop bays under a canopy',
           plain: 'Plain — no facade articulation, for houses and sheds',
         }[id],
       })),
@@ -311,6 +318,17 @@ export const buildingParams: readonly ParamSpec[] = [
     ],
     help: 'Only the KIND of opening follows the building type. The sizes below stay yours either way.',
   }),
+  choice('panes', 'Window panes', {
+    group: 'openings',
+    default: 'auto',
+    visibleIf: (v) => windowKind(v) === 'punched',
+    options: [
+      { value: 'auto', label: 'Match the building type' },
+      { value: 'on', label: 'Divided — mullions and a transom' },
+      { value: 'off', label: 'Single — one open light' },
+    ],
+    help: 'Divided windows keep glazing bars standing in each opening: a mullion every couple of feet, and a transom across the top third of a tall one. They are wall that was never cut, so they cannot come loose.',
+  }),
   num('winWidth', 'Window width', {
     group: 'openings',
     unit: '',
@@ -402,6 +420,25 @@ export const buildingParams: readonly ParamSpec[] = [
     ],
     help: 'Cut into the outside of the walls as joints. Real bricks are too small to print at most scales, so a pattern that would be finer than the printer can draw is enlarged until it prints, and the app says by how much.',
   }),
+  choice('groundFloor', 'Ground floor', {
+    group: 'facade',
+    default: 'auto',
+    options: [
+      { value: 'auto', label: 'Match the building type' },
+      { value: 'wall', label: 'Same as the floors above' },
+      { value: 'shop', label: 'Glazed shop bays across the front' },
+      { value: 'frontPilotis', label: 'Open under the front, on columns' },
+      { value: 'pilotis', label: 'Open all round, on columns' },
+      { value: 'course', label: 'Stone base course' },
+    ],
+    help: 'The ground floor is where real buildings differ most, so the building type only suggests one. Columns line up with the window bays above.',
+  }),
+  bool('archedShops', 'Arched shop bays', {
+    group: 'facade',
+    default: false,
+    visibleIf: (v) => groundKind(v) === 'shop',
+    help: 'Round heads on the shop bays. An arch is its own support, so it prints without a bridge across the top.',
+  }),
   // Every control below belongs to an element only some styles have, so each
   // is shown by asking the trait table rather than naming styles by hand.
   num('balconyDepth', 'Balcony depth', {
@@ -431,7 +468,7 @@ export const buildingParams: readonly ParamSpec[] = [
     max: 30,
     step: 1,
     default: 6,
-    visibleIf: (v) => trait(v).bands !== 'none' || trait(v).ground === 'course',
+    visibleIf: (v) => trait(v).bands !== 'none' || groundKind(v) === 'course',
     help: 'Inches the floor bands, spandrels or base course stand proud of the wall.',
   }),
   num('mullionPitch', 'Mullion spacing', {
@@ -470,7 +507,7 @@ export const buildingParams: readonly ParamSpec[] = [
       { value: 'glazed', label: 'Glazed shopfront behind them' },
       { value: 'open', label: 'Left open' },
     ],
-    visibleIf: (v) => trait(v).ground === 'pilotis' || trait(v).ground === 'frontPilotis',
+    visibleIf: (v) => groundKind(v) === 'pilotis' || groundKind(v) === 'frontPilotis',
     help: 'A glazed wall set back behind the columns. It is what a shop has under it, and it also braces the columns: on its own each one is a cantilever off the slab, and the open ground floor is the only place a miniature building stands on sticks.',
   }),
   num('chamfer', 'Corner chamfer', {
@@ -483,7 +520,48 @@ export const buildingParams: readonly ParamSpec[] = [
     visibleIf: (v) => trait(v).chamfer,
     help: 'Feet cut off each corner in plan. The ribbon windows wrap round the chamfer, which is the whole point of it.',
   }),
-  num('signWidth', 'Sign panel width', {
+  choice('signPlace', 'Screen position', {
+    group: 'facade',
+    default: 'roof',
+    visibleIf: (v) => trait(v).sign,
+    options: [
+      { value: 'facade', label: 'On the facade — up the front from the first floor' },
+      { value: 'roof', label: 'On the roof — standing behind the parapet' },
+    ],
+    help: 'A rooftop screen needs a flat roof to stand on. It faces the street from just behind the front parapet, braced from behind.',
+  }),
+  choice('signMount', 'Rooftop mount', {
+    group: 'facade',
+    default: 'frame',
+    visibleIf: (v) => trait(v).sign && v.signPlace === 'roof',
+    options: [
+      { value: 'frame', label: 'Raised on a steel frame — lattice tower, catwalk, lamps' },
+      { value: 'braced', label: 'Low, braced from behind' },
+    ],
+    help: 'The raised billboard of an older city roof: the board up on a braced steel tower, a catwalk along its foot on brackets, lamps leaning over the top. Every member is vertical, horizontal or at 45 degrees, so it prints with the roof and needs no support.',
+  }),
+  num('signLift', 'Frame height', {
+    group: 'facade',
+    unit: '',
+    min: 4,
+    max: 40,
+    step: 0.5,
+    default: 12,
+    visibleIf: (v) => trait(v).sign && v.signPlace === 'roof' && v.signMount !== 'braced',
+    help: 'Feet from the roof deck to the foot of the board.',
+  }),
+  choice('signStyle', 'Screen style', {
+    group: 'facade',
+    default: 'framed',
+    visibleIf: (v) => trait(v).sign,
+    options: [
+      { value: 'framed', label: 'Framed billboard — a raised border round a blank face' },
+      { value: 'slim', label: 'Slim screen — a thin bezel, the face almost flush' },
+      { value: 'tiled', label: 'Video wall — the face in a grid of LED tiles' },
+    ],
+    help: 'The face is left blank whatever the style: it takes a decal, a paper print or paint.',
+  }),
+  num('signWidth', 'Screen width', {
     group: 'facade',
     unit: '',
     min: 4,
@@ -491,7 +569,17 @@ export const buildingParams: readonly ParamSpec[] = [
     step: 0.5,
     default: 13,
     visibleIf: (v) => trait(v).sign,
-    help: 'Feet. A billboard standing proud of the front, over the glazing behind it.',
+    help: 'Feet. A framed blank screen, standing proud of the front or on the roof.',
+  }),
+  num('signHeight', 'Screen height', {
+    group: 'facade',
+    unit: '',
+    min: 4,
+    max: 120,
+    step: 0.5,
+    default: 18,
+    visibleIf: (v) => trait(v).sign,
+    help: 'Feet. On the facade it is measured up from the first floor and stops at the roof; 18 ft keeps it within two storeys. On the roof it is measured up from the deck.',
   }),
   num('canopyDepth', 'Entrance canopy', {
     group: 'facade',
@@ -502,6 +590,16 @@ export const buildingParams: readonly ParamSpec[] = [
     default: 7,
     visibleIf: (v) => trait(v).canopy,
     help: 'Feet it projects. It comes with posts and an apron, because a canopy on nothing prints as three loose pieces.',
+  }),
+  num('awningDepth', 'Shop canopy', {
+    group: 'facade',
+    unit: '',
+    min: 1,
+    max: 10,
+    step: 0.5,
+    default: 3,
+    visibleIf: (v) => trait(v).awning,
+    help: 'Feet the thin slab over the ground floor runs out past the shopfronts. It is the edge of the first-floor slab and prints flat on the bed with it, so it needs no support however deep it is.',
   }),
   num('towerHeight', 'Stair tower', {
     group: 'facade',
@@ -521,6 +619,7 @@ export const buildingParams: readonly ParamSpec[] = [
     options: [
       { value: 'parapet', label: 'Flat, with a parapet' },
       { value: 'penthouse', label: 'Parapet with a rooftop penthouse' },
+      { value: 'railing', label: 'Flat, with a guard rail' },
       { value: 'flat', label: 'Flat' },
       { value: 'gable', label: 'Gable' },
       { value: 'hip', label: 'Hipped' },
@@ -548,8 +647,18 @@ export const buildingParams: readonly ParamSpec[] = [
     max: 12,
     step: 0.5,
     default: 3.5,
+    visibleIf: (v) => hasParapet(v) || v.roof === 'railing',
+    help: 'Feet above the roof deck, to the top of the parapet or the guard rail.',
+  }),
+  num('parapetWall', 'Parapet thickness', {
+    group: 'roof',
+    unit: '',
+    min: 3,
+    max: 24,
+    step: 0.5,
+    default: 6,
     visibleIf: hasParapet,
-    help: 'Feet above the roof deck.',
+    help: 'INCHES, real. A parapet carries nothing but its coping, so it is thinner than the walls below: flush with the facade outside, stepped in on the roof side. Floored at what your nozzle can lay, and never thicker than the exterior wall.',
   }),
   num('penthouseHeight', 'Penthouse height', {
     group: 'roof',

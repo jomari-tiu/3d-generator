@@ -1,5 +1,5 @@
 import type { Params } from '../../core/params/types';
-import { traitsOf, type Style, type StyleTraits } from './styles';
+import { traitsOf, type Ground, type Style, type StyleTraits } from './styles';
 
 /**
  * Real-world -> model, and everything that follows from it.
@@ -44,7 +44,7 @@ const PIN_CLEAR = 0.15;
 
 export type Layout = 'open' | 'rooms' | 'corridor';
 export type Windows = 'none' | 'punched' | 'ribbon';
-export type Roof = 'flat' | 'parapet' | 'penthouse' | 'gable' | 'hip' | 'none';
+export type Roof = 'flat' | 'parapet' | 'railing' | 'penthouse' | 'gable' | 'hip' | 'none';
 /**
  * What the plan is: a free-standing rectangle, or an L that fills the inside
  * corner of a shelf with one wing along each wall.
@@ -82,6 +82,12 @@ export interface Derived {
   /** Model mm cut off each corner in plan. Zero for a plain rectangle. */
   readonly chamfer: number;
   readonly balconyD: number;
+  /** How far the canopy slab over the ground floor runs out. Zero without one. */
+  readonly awningD: number;
+  /** Width of a glazing bar dividing a window into panes. */
+  readonly paneBar: number;
+  /** Shop bays with round heads instead of square ones. */
+  readonly archedShops: boolean;
   readonly balconyW: number;
   readonly railT: number;
   readonly railH: number;
@@ -91,6 +97,16 @@ export interface Derived {
   readonly stripeW: number;
   readonly stripeCount: number;
   readonly signW: number;
+  /** How tall the screen stands, model mm: from the first floor on the facade, from the deck on the roof. */
+  readonly signH: number;
+  /** Where the screen goes: up the front, or standing on the roof behind the parapet. */
+  readonly signPlace: 'facade' | 'roof';
+  /** How the screen's face is worked -- see screenSolid in facade.ts. */
+  readonly signStyle: 'framed' | 'slim' | 'tiled';
+  /** How a rooftop screen stands: low and braced, or raised on a steel frame. */
+  readonly signMount: 'braced' | 'frame';
+  /** How far a framed rooftop screen is lifted above the deck. */
+  readonly signLift: number;
   readonly signProj: number;
   /** Width of the raised border standing round the blank billboard face. */
   readonly signFrame: number;
@@ -219,6 +235,14 @@ export interface Derived {
   // ------------------------------------------------------------------- roof
   readonly roof: Roof;
   readonly parapetH: number;
+  /**
+   * Model mm through the parapet wall, as printed, as scaled, and the real
+   * inches asked for. Thinner than the walls below it, as a real one is: it
+   * carries nothing but its own coping.
+   */
+  readonly parapetT: number;
+  readonly parapetTScaled: number;
+  readonly parapetTRealIn: number;
   /** Model mm the set-back rooftop penthouse stands above the deck. */
   readonly penthouseH: number;
   readonly pitchDeg: number;
@@ -337,7 +361,18 @@ export function derive(p: Params): Derived {
   // --- style. The traits decide WHICH facade elements exist; the numbers
   // below are the user's, and are read only by the elements that are on.
   const style = String(p.style) as Style;
-  const t = traitsOf(style);
+  // Two traits the user can take over, the way Windows can: the ground floor
+  // and the panes are what most separate one real building from the next, so
+  // a type's choice is a default, not a rule. Folded into the traits here so
+  // every element downstream reads one answer.
+  const base = traitsOf(style);
+  const groundAsk = String(p.groundFloor);
+  const panesAsk = String(p.panes);
+  const t: StyleTraits = {
+    ...base,
+    ground: groundAsk === 'auto' || !groundAsk ? base.ground : (groundAsk as Ground),
+    panes: panesAsk === 'on' ? true : panesAsk === 'off' ? false : base.panes,
+  };
   const sill = ft(Number(p.winSill));
 
   // --- the column under an open ground floor.
@@ -399,6 +434,11 @@ export function derive(p: Params): Derived {
     // its walls, where a chamfer only opens a gap nobody can see into.
     chamfer: t.chamfer && shape === 'rect' ? Math.min(ft(Number(p.chamfer)), Math.min(W, D) / 2 - extT * 2) : 0,
     balconyD: ft(Number(p.balconyDepth)),
+    awningD: t.awning ? ft(Number(p.awningDepth)) : 0,
+    // A real glazing bar is 2 to 3 in -- a third of a millimetre at 1:144 -- so it
+    // is floored at two extrusions like every other wall here, and reads heavier.
+    paneBar: Math.max(minWall, inch(3)),
+    archedShops: p.archedShops === true,
     balconyW: (frontLen - 2 * extT) * Math.min(0.95, Number(p.balconyWidth) / 100),
     railT: Math.max(minWall, inch(6)),
     railH: ft(Number(p.railHeight)),
@@ -407,6 +447,13 @@ export function derive(p: Params): Derived {
     stripeW: ft(Number(p.stripeWidth)),
     stripeCount: Math.max(1, Math.round(Number(p.stripes))),
     signW: ft(Number(p.signWidth)),
+    signH: ft(Number(p.signHeight)),
+    signPlace: String(p.signPlace) === 'roof' ? 'roof' : 'facade',
+    signStyle: (['framed', 'slim', 'tiled'].includes(String(p.signStyle))
+      ? String(p.signStyle)
+      : 'framed') as 'framed' | 'slim' | 'tiled',
+    signMount: String(p.signMount) === 'frame' ? 'frame' : 'braced',
+    signLift: ft(Number(p.signLift)),
     signProj: Math.max(minWall, inch(Number(p.signProjection))),
     // A border thinner than two extrusions is a line the slicer lays or skips
     // depending on where the panel happens to fall on its grid, and a frame
@@ -509,6 +556,11 @@ export function derive(p: Params): Derived {
 
     roof: String(p.roof) as Roof,
     parapetH: ft(Number(p.parapet)),
+    // Floored at the nozzle like every wall, and never thicker than the wall it
+    // stands on -- a parapet overhanging the room below has nothing under it.
+    parapetT: Math.min(extT, Math.max(inch(Number(p.parapetWall)), minWall)),
+    parapetTScaled: inch(Number(p.parapetWall)),
+    parapetTRealIn: Number(p.parapetWall),
     penthouseH: ft(Number(p.penthouseHeight)),
     pitchDeg: Number(p.roofPitch),
     eaves: ft(Number(p.eaves)),
@@ -578,5 +630,5 @@ export function rng(seed: number): () => number {
  * and a pitched roof has nowhere to stand -- none of them gets the flight.
  */
 export function roofAccess(d: Derived): boolean {
-  return d.core && d.bulkhead && (d.roof === 'flat' || d.roof === 'parapet') && d.rooftop !== 'helipad';
+  return d.core && d.bulkhead && (d.roof === 'flat' || d.roof === 'parapet' || d.roof === 'railing') && d.rooftop !== 'helipad';
 }

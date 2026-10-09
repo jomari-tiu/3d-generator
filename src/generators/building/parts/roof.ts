@@ -1,7 +1,19 @@
 import type { Manifold, ManifoldToplevel } from 'manifold-3d';
 import { roofAccess, type Derived } from '../geometry';
 import type { Rect } from '../plan';
-import { footprintSection, innerCorner, isCorner, shelfClip, shellSection } from './shape';
+import {
+  cutAway,
+  faceLen,
+  faces,
+  footprintSection,
+  frontBand,
+  frontFace,
+  innerCorner,
+  isCorner,
+  shelfClip,
+  shellSection,
+} from './shape';
+import { screenRecess, screenSolid, signBoard } from './facade';
 import { groove, jointAt, pinSockets } from './storey';
 
 /**
@@ -205,15 +217,112 @@ function hasParapet(d: Derived): boolean {
   return (d.roof === 'parapet' || d.roof === 'penthouse') && d.parapetH > 0;
 }
 
+/**
+ * A guard rail round the roof edge: posts, a top rail and a curb at the foot.
+ *
+ * Cut, like the louvred parapet, rather than assembled: a thin wall on the
+ * wall line with the gaps between posts taken out of it, so the rail is one
+ * piece with the deck and cannot come off post by post. Gaps are cut face by
+ * face, through that face's wall only -- a gap cut straight across the
+ * building would take a bite out of every wall it crossed, and on an L that
+ * includes the courtyard walls. The top rail bridges each gap, which is a short
+ * bridge; the curb gives every post a footing wider than itself.
+ */
+function guardRail(m: ManifoldToplevel, d: Derived): Manifold | null {
+  const h = d.parapetH;
+  if (h < d.perFt) return null;
+  const railT = Math.max(d.minWall, d.perFt * 0.25);
+  const post = Math.max(railT * 1.2, d.perFt * 0.4);
+  const spacing = Math.max(d.perFt * 5, post * 3);
+  const curb = Math.max(3 * d.layer, d.perFt * 0.3);
+  const bar = Math.max(3 * d.layer, d.perFt * 0.35);
+  const lap = Math.min(d.roofT / 2, 0.3);
+  const z0 = d.roofZ + d.roofT;
+  const rail = m.Manifold.extrude(shellSection(m, d, railT), h + lap).translate([0, 0, z0 - lap]);
+
+  const gapH = h - curb - bar;
+  if (gapH < d.minWall) return rail;
+  const gaps: Manifold[] = [];
+  for (const f of faces(d)) {
+    if (cutAway(d, f)) continue;
+    const n = Math.max(1, Math.round((faceLen(f) - post) / spacing));
+    const step = (faceLen(f) - post) / n;
+    if (step - post < d.minWall) continue;
+    const near = f.at + f.side * 0.5;
+    const far = f.at - f.side * (railT + 0.5);
+    for (let k = 0; k < n; k++) {
+      const a0 = f.c0 + post + k * step;
+      const a1 = f.c0 + (k + 1) * step;
+      const [b0, b1] = [Math.min(near, far), Math.max(near, far)];
+      const size: [number, number, number] = f.alongX
+        ? [a1 - a0, b1 - b0, gapH]
+        : [b1 - b0, a1 - a0, gapH];
+      gaps.push(
+        m.Manifold.cube(size, true).translate(
+          f.alongX
+            ? [(a0 + a1) / 2, (b0 + b1) / 2, z0 + curb + gapH / 2]
+            : [(b0 + b1) / 2, (a0 + a1) / 2, z0 + curb + gapH / 2],
+        ),
+      );
+    }
+  }
+  return gaps.length > 0 ? rail.subtract(m.Manifold.union(gaps)) : rail;
+}
+
 function flatRoof(m: ManifoldToplevel, d: Derived): Manifold {
+  const top = flatRoofTop(m, d);
+  const crown = cornice(m, d);
+  return crown ? top.add(crown) : top;
+}
+
+/**
+ * A cornice finishing the top of the walls: at the head of the parapet, or at
+ * the deck edge of a roof without one.
+ *
+ * A real cornice spreads as it rises, which here is an overhang -- so it
+ * spreads in steps, each one standing out no further than it is tall: 45
+ * degrees, printable on a roof that prints deck-down. A plain band at full
+ * projection caps it. Rooted half a wall into the parapet so it is welded on.
+ */
+function cornice(m: ManifoldToplevel, d: Derived): Manifold | null {
+  if (!d.t.cornice) return null;
+  const parapet = hasParapet(d);
+  const P = Math.max(d.perFt * 1.25, 2 * d.minWall);
+  const cap = Math.max(P * 0.6, 3 * d.layer);
+  const deck = d.roofZ + d.roofT;
+  const top = parapet ? deck + d.parapetH : deck + cap + P * 0.5;
+  const zc0 = Math.max(d.roofZ, top - cap - P);
+  const steps = 4;
+  const s = (top - cap - zc0) / steps;
+  if (s <= 0) return null;
+  const inner = footprintSection(m, d, (parapet ? d.parapetT : d.extT) * 0.5);
+  const ring = (proj: number) => {
+    let r = footprintSection(m, d, -proj).subtract(inner);
+    if (d.openFront) r = r.subtract(frontBand(m, d, d.extT));
+    return r;
+  };
+  const tiers: Manifold[] = [];
+  for (let k = 1; k <= steps; k++) {
+    const z = zc0 + (k - 1) * s;
+    tiers.push(m.Manifold.extrude(ring((k * P) / steps), top - z).translate([0, 0, z]));
+  }
+  return m.Manifold.union(tiers);
+}
+
+/** The deck and whatever stands round its edge. */
+function flatRoofTop(m: ManifoldToplevel, d: Derived): Manifold {
   const deck = m.Manifold.extrude(footprintSection(m, d), d.roofT).translate([0, 0, d.roofZ]);
+  if (d.roof === 'railing') {
+    const rail = guardRail(m, d);
+    return rail ? deck.add(rail) : deck;
+  }
   if (!hasParapet(d)) return deck;
   // Rooted INTO the deck rather than stood on it. The coordinates coincide
   // exactly either way, but a wall that only meets its deck on one plane is
   // the loose-shell failure this project keeps rediscovering, and a third of a
   // millimetre of overlap costs nothing.
   const lap = Math.min(d.roofT / 2, 0.3);
-  let wall = m.Manifold.extrude(shellSection(m, d), d.parapetH + lap).translate([
+  let wall = m.Manifold.extrude(shellSection(m, d, d.parapetT), d.parapetH + lap).translate([
     0,
     0,
     d.roofZ + d.roofT - lap,
@@ -284,6 +393,197 @@ function bulkhead(m: ManifoldToplevel, d: Derived, core: Rect, zTop: number): Ma
     );
   }
   return solid;
+}
+
+/** Does the screen go on the roof, and is there a flat deck for it to stand on? */
+export function roofScreenWanted(d: Derived): boolean {
+  return d.t.sign && d.signPlace === 'roof';
+}
+
+export function roofScreenFits(d: Derived): boolean {
+  return (
+    roofScreenWanted(d) &&
+    (d.roof === 'flat' || d.roof === 'parapet' || d.roof === 'railing' || d.roof === 'penthouse')
+  );
+}
+
+/**
+ * Where the rooftop screen stands in plan, including the struts behind it: for
+ * keeping rooftop features clear of it.
+ */
+export function roofScreenSpan(d: Derived): Rect | null {
+  if (!roofScreenFits(d)) return null;
+  const b = signBoard(d);
+  if (!b) return null;
+  const { yF, t, brace, frameD, catwalk, post } = roofScreenDepths(d);
+  return d.signMount === 'frame'
+    ? { x0: b.x0, x1: b.x1, y0: yF - catwalk, y1: yF + frameD + post }
+    : { x0: b.x0, x1: b.x1, y0: yF, y1: yF + t + brace };
+}
+
+function roofScreenDepths(d: Derived): {
+  yF: number;
+  t: number;
+  brace: number;
+  frameD: number;
+  catwalk: number;
+  post: number;
+} {
+  // Just behind whatever stands at the roof edge, so it reads over it.
+  const edge = d.roof === 'parapet' || d.roof === 'penthouse' ? d.parapetT : d.roof === 'railing' ? d.perFt * 0.4 : 0;
+  const post = Math.max(1.5 * d.minWall, d.perFt * 0.8);
+  // The catwalk hangs out in front of the board, so a raised board stands
+  // back by the catwalk's width to keep it over the roof.
+  const catwalk = d.signMount === 'frame' ? Math.max(d.perFt * 2.5, 3 * d.minWall) : 0;
+  const yF = frontFace(d).at + edge + d.perFt * 1.5 + catwalk;
+  const t = Math.max(3 * d.minWall, d.perFt * 1.2);
+  const brace = Math.min(d.signH * 0.4, d.perFt * 8);
+  // No deeper than half the frame is tall, so a brace across the side of the
+  // tower climbs at 45 degrees or steeper and prints without support.
+  const frameD = Math.max(post * 3, Math.min(d.signLift * 0.5, d.perFt * 8));
+  return { yF, t, brace, frameD, catwalk, post };
+}
+
+/** A square member from one point to another: the hull of a cube at each end. */
+function member(
+  m: ManifoldToplevel,
+  a: readonly [number, number, number],
+  b: readonly [number, number, number],
+  s: number,
+): Manifold {
+  const cube = (p: readonly [number, number, number]) =>
+    m.Manifold.cube([s, s, s], true).translate([p[0], p[1], p[2]]);
+  return m.Manifold.hull([cube(a), cube(b)]);
+}
+
+/**
+ * A screen standing on the roof behind the front parapet, facing the street.
+ *
+ * Braced: a slab on its edge, held from behind by two struts that are
+ * right-angled triangles in section. Raised: the billboard of an older city
+ * roof, up on a steel tower -- see raisedScreen. Either way the roof prints
+ * deck-down, so the board is a wall growing straight up and nothing overhangs.
+ */
+function roofScreen(m: ManifoldToplevel, d: Derived, zDeck: number): Manifold | null {
+  if (!roofScreenFits(d)) return null;
+  const b = signBoard(d);
+  if (!b) return null;
+  if (d.signMount === 'frame') return raisedScreen(m, d, b, zDeck);
+  const { yF, t, brace } = roofScreenDepths(d);
+  const lap = Math.min(d.roofT / 2, 0.3);
+  const panel = screenSolid(m, d, b, yF, yF + t, zDeck - lap, zDeck + d.signH, screenRecess(d, t));
+
+  // Struts: profile in (y, z) behind the panel, extruded across x.
+  const strutT = Math.max(1.5 * d.minWall, d.perFt * 0.8);
+  const rise = d.signH * 0.85;
+  const profile: [number, number][] = [
+    [-0.2, -lap],
+    [brace, -lap],
+    [-0.2, rise],
+  ];
+  const wedge = m.CrossSection.ofPolygons([profile], 'NonZero').extrude(strutT);
+  const struts = [b.x0 + (b.x1 - b.x0) * 0.2, b.x1 - (b.x1 - b.x0) * 0.2].map((cx) =>
+    // u -> y, v -> z, extrusion -> x, the same turn as the solar rows.
+    wedge.rotate([90, 0, 90]).translate([cx - strutT / 2, yF + t, zDeck]),
+  );
+  return m.Manifold.union([panel, ...struts]);
+}
+
+/**
+ * A billboard raised on a steel tower, the way an older city roof carries one.
+ *
+ * Two rows of posts -- one under the board, one behind -- tied by girders at
+ * the top and halfway up, with chevron bracing in every face of the tower and
+ * the board propped back to the rear posts. A catwalk runs along the foot of
+ * the board on brackets, and lamps lean out over its top.
+ *
+ * Every member is vertical, horizontal, or at 45 degrees or steeper, because
+ * the roof prints deck-down and the tower is printed with it: posts are
+ * columns, girders are short bridges between them, braces climb, the catwalk
+ * stands on brackets rising to meet it, and the lamps lean out no further than
+ * a 45-degree overhang. The board itself is the blank one screenSolid makes.
+ */
+function raisedScreen(
+  m: ManifoldToplevel,
+  d: Derived,
+  b: { readonly x0: number; readonly x1: number; readonly frame: number },
+  zDeck: number,
+): Manifold {
+  const { yF, t, frameD, catwalk, post } = roofScreenDepths(d);
+  const lap = Math.min(d.roofT / 2, 0.3);
+  const zTop = zDeck + d.signLift;
+  const zMid = zDeck + d.signLift / 2;
+  const brace = Math.max(d.minWall * 1.2, post * 0.6);
+  const w = b.x1 - b.x0;
+  // Posts no further apart than half the tower is tall, so chevron braces
+  // between them climb at 45 degrees or steeper.
+  const bay = Math.min(d.perFt * 7, d.signLift);
+  const n = Math.max(2, Math.ceil((w - post) / bay) + 1);
+  const xs = Array.from({ length: n }, (_, i) => b.x0 + post / 2 + (i * (w - post)) / (n - 1));
+  const yFront = yF + t / 2;
+  const yBack = yF + frameD;
+  const parts: Manifold[] = [];
+  const bar = (x0: number, x1: number, y0: number, y1: number, z0: number, z1: number) =>
+    m.Manifold.cube([x1 - x0, y1 - y0, z1 - z0], true).translate([
+      (x0 + x1) / 2,
+      (y0 + y1) / 2,
+      (z0 + z1) / 2,
+    ]);
+
+  // Posts, and the girders tying them at the top and halfway up.
+  for (const y of [yFront, yBack]) {
+    for (const x of xs) parts.push(bar(x - post / 2, x + post / 2, y - post / 2, y + post / 2, zDeck - lap, zTop));
+    for (const z of [zMid, zTop - post / 2]) {
+      parts.push(bar(b.x0, b.x1, y - post / 2, y + post / 2, z - post / 2, z + post / 2));
+    }
+  }
+  for (const x of xs) {
+    for (const z of [zMid, zTop - post / 2]) {
+      parts.push(bar(x - post / 2, x + post / 2, yFront, yBack, z - post / 2, z + post / 2));
+    }
+  }
+
+  // Chevron bracing: in the front and back faces, from the foot of each post up
+  // to the middle of the girder above the bay, in both tiers.
+  for (const y of [yFront, yBack]) {
+    for (let i = 0; i + 1 < xs.length; i++) {
+      const mid = (xs[i]! + xs[i + 1]!) / 2;
+      for (const [z0, z1] of [[zDeck, zMid], [zMid, zTop - post]] as const) {
+        parts.push(member(m, [xs[i]!, y, z0], [mid, y, z1], brace));
+        parts.push(member(m, [xs[i + 1]!, y, z0], [mid, y, z1], brace));
+      }
+    }
+  }
+  // Across each end of the tower, front foot to back post.
+  for (const x of [xs[0]!, xs[xs.length - 1]!]) {
+    parts.push(member(m, [x, yFront, zDeck], [x, yBack, zMid], brace));
+    parts.push(member(m, [x, yFront, zMid], [x, yBack, zTop - post], brace));
+  }
+
+  // The board, standing on the front girder, and propped back to the rear
+  // posts at 45 degrees or steeper.
+  parts.push(screenSolid(m, d, b, yF, yF + t, zTop - 0.2, zTop + d.signH, screenRecess(d, t)));
+  const run = yBack - (yF + t);
+  const rise = Math.min(d.signH * 0.8, Math.max(run, d.signH * 0.5));
+  for (const x of xs) parts.push(member(m, [x, yBack, zTop - post / 2], [x, yF + t - brace / 2, zTop + rise], brace));
+
+  // The catwalk along the foot of the board, on brackets rising from the front
+  // posts to meet its outer edge.
+  const plank = Math.max(2 * d.minPlate, d.perFt * 0.4);
+  parts.push(bar(b.x0, b.x1, yF - catwalk, yF + 0.2, zTop - plank, zTop));
+  const drop = yFront - (yF - catwalk) + brace;
+  for (const x of xs) {
+    parts.push(member(m, [x, yFront, zTop - plank - drop], [x, yF - catwalk + brace / 2, zTop - plank + brace / 2], brace));
+  }
+
+  // Lamps over the top: an arm leaning out at 45 degrees, one over each bay.
+  const reach = Math.max(d.perFt * 2.5, 3 * brace);
+  for (let i = 0; i + 1 < xs.length; i++) {
+    const x = (xs[i]! + xs[i + 1]!) / 2;
+    parts.push(member(m, [x, yF + t / 2, zTop + d.signH - brace], [x, yF - reach, zTop + d.signH + reach], brace));
+  }
+
+  return m.Manifold.union(parts);
 }
 
 /**
@@ -366,6 +666,9 @@ export function buildRoof(m: ManifoldToplevel, d: Derived, core: Rect | null): M
     const block = penthouse(m, d, d.roofZ + d.roofT);
     if (block) solid = solid.add(block);
   }
+
+  const screen = roofScreen(m, d, d.roofZ + d.roofT);
+  if (screen) solid = solid.add(screen);
 
   if (core && hasBulkhead(d, core)) {
     // The stair from the top storey comes up through here, so the deck is

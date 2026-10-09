@@ -1,12 +1,12 @@
 import type { ManifoldToplevel } from 'manifold-3d';
 import { describe, expect, it } from 'vitest';
-import { packPlate } from '../src/core/build/layout';
+import { packPlate, packPlates } from '../src/core/build/layout';
 import { coerceAll, defaultsOf } from '../src/core/params/validate';
 import type { BuildCtx, Params } from '../src/core/params/types';
 import { buildingGenerator } from '../src/generators/building/build';
 import { derive, FT_MM, IN_MM } from '../src/generators/building/geometry';
 import { area, depth, makePlan, width, type Rect } from '../src/generators/building/plan';
-import { buildRoof } from '../src/generators/building/parts/roof';
+import { buildRoof, roofScreenSpan } from '../src/generators/building/parts/roof';
 import { windowCentres } from '../src/generators/building/parts/shape';
 import { buildStorey, jointAt, pinPositions } from '../src/generators/building/parts/storey';
 import { buildStairs, risersFor, stairFit } from '../src/generators/building/parts/stairs';
@@ -502,6 +502,43 @@ describe('building miniature', () => {
     }
   });
 
+  it('stands a parapet thinner than the walls, flush outside, and as thick as asked', async () => {
+    const m = await kernel();
+    try {
+      // Measured through the built roof: a bar 1 mm square driven in through the
+      // middle of the back parapet, clear of the plant room over the core.
+      const through = (patch: Params) => {
+        const d = derived({ roof: 'parapet', ...patch });
+        const roof = buildRoof(m, d, makePlan(d).core)!;
+        const bar = m.Manifold.cube([1, 10, 1], true).translate([
+          d.W / 4,
+          d.D / 2 - 4,
+          d.roofZ + d.roofT + d.parapetH / 2,
+        ]);
+        const hit = roof.intersect(bar);
+        // Flush with the facade below: the outer face is the wall's outer face.
+        expect(hit.boundingBox().max[1]!).toBeCloseTo(d.D / 2, 3);
+        return { d, thick: hit.volume() };
+      };
+
+      const def = through({});
+      expect(def.d.parapetTRealIn).toBe(6);
+      expect(def.thick).toBeCloseTo((6 * IN_MM) / def.d.scale, 2);
+      expect(def.thick).toBeLessThan(def.d.extT);
+
+      // Floored at what the nozzle can lay, and said so.
+      const thin = through({ parapetWall: 3 });
+      expect(thin.thick).toBeCloseTo(thin.d.minWall, 2);
+      expect(issuesOf({ roof: 'parapet', parapetWall: 3 }, 'warn').join()).toMatch(/3 in parapet/);
+
+      // Never thicker than the wall it stands on.
+      const thick = through({ parapetWall: 24 });
+      expect(thick.thick).toBeCloseTo(thick.d.extT, 2);
+    } finally {
+      cleanup();
+    }
+  });
+
   it('caps a flat roof and stands a plant room on it', async () => {
     const m = await kernel();
     try {
@@ -626,7 +663,7 @@ describe('building miniature', () => {
   it('frames the billboard, leaves its face blank, and keeps it on the front', async () => {
     const m = await kernel();
     try {
-      const d = derived({ style: 'ribbon', floors: 5, chamfer: 8, signWidth: 14 });
+      const d = derived({ style: 'ribbon', floors: 5, chamfer: 8, signWidth: 14, signPlace: 'facade' });
       expect(d.t.sign).toBe(true);
       const plan = makePlan(d);
       const withSign = buildStorey(m, d, plan, 2).solid;
@@ -648,6 +685,98 @@ describe('building miniature', () => {
         2,
       ).solid;
       expect(withSign.volume()).toBeGreaterThan(noSign.volume());
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('stands the screen from the first floor as tall as asked, two storeys by default', async () => {
+    const m = await kernel();
+    try {
+      // The screen is the only thing standing further out than the spandrels,
+      // so a storey reaches past them exactly when it carries a piece of it.
+      const carries = (d: ReturnType<typeof derived>, level: number) =>
+        -buildStorey(m, d, makePlan(d), level).solid.boundingBox().min[1]! - d.D / 2 >
+        d.bandProj + 1e-3;
+      // 18 ft on 9 ft 6 in storeys: the first floor and most of the second.
+      const two = derived({ style: 'ribbon', floors: 7, signPlace: 'facade' });
+      expect(two.signH / two.perFt).toBe(18);
+      expect([0, 1, 2, 3, 4, 5, 6].map((i) => carries(two, i))).toEqual([
+        false, true, true, false, false, false, false,
+      ]);
+      const four = derived({ style: 'ribbon', floors: 7, signHeight: 36, signPlace: 'facade' });
+      expect([0, 1, 2, 3, 4, 5, 6].map((i) => carries(four, i))).toEqual([
+        false, true, true, true, true, false, false,
+      ]);
+      // Never past the top storey on a short building.
+      const short = derived({ style: 'ribbon', floors: 2, signPlace: 'facade' });
+      expect([0, 1].map((i) => carries(short, i))).toEqual([false, true]);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('builds each screen style, in one piece with the storey it is on', async () => {
+    const m = await kernel();
+    try {
+      const vols: Record<string, number> = {};
+      for (const signStyle of ['framed', 'slim', 'tiled']) {
+        const d = derived({ style: 'ribbon', floors: 4, signStyle, signPlace: 'facade' });
+        const solid = buildStorey(m, d, makePlan(d), 1).solid;
+        expect(shells(solid), signStyle).toBe(1);
+        vols[signStyle] = solid.volume();
+      }
+      // A slim screen's face is barely recessed, so it is more solid than a
+      // framed board's; tiling cuts joints back into that face.
+      expect(vols.slim!).toBeGreaterThan(vols.framed!);
+      expect(vols.tiled!).toBeLessThan(vols.slim!);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('stands the screen on the roof instead when asked, braced, facing the street', async () => {
+    const m = await kernel();
+    try {
+      for (const patch of [{}, { footprint: 'corner', width: 54, depth: 46, wing: 20 }] as Params[]) {
+        const d = derived({ style: 'ribbon', floors: 4, roof: 'parapet', signPlace: 'roof', signHeight: 16, ...patch });
+        const label = JSON.stringify(patch);
+        // Nothing up the facade any more.
+        const storey = buildStorey(m, d, makePlan(d), 1).solid;
+        expect(-storey.boundingBox().min[1]! - d.D / 2, label).toBeLessThanOrEqual(d.bandProj + 1e-3);
+        // On the roof: one piece with it, as tall as asked above the deck.
+        const roof = buildRoof(m, d, makePlan(d).core)!;
+        expect(shells(roof), label).toBe(1);
+        expect(roof.boundingBox().max[2]!, label).toBeGreaterThanOrEqual(d.roofZ + d.roofT + d.signH - 1e-3);
+      }
+      // Raised on its steel tower: one piece with the roof, the board's foot
+      // at the frame height and its top as tall again as asked, plus lamps.
+      for (const signStyle of ['framed', 'slim', 'tiled']) {
+        const d = derived({
+          style: 'ribbon', floors: 4, roof: 'parapet', signPlace: 'roof', signMount: 'frame',
+          signLift: 12, signHeight: 14, signStyle,
+        });
+        const roof = buildRoof(m, d, makePlan(d).core)!;
+        expect(roof.status(), signStyle).toBe('NoError');
+        expect(shells(roof), signStyle).toBe(1);
+        const top = d.roofZ + d.roofT + d.signLift + d.signH;
+        expect(roof.boundingBox().max[2]!, signStyle).toBeGreaterThan(top);
+        // The tower is open: a slice through its own footprint, above the
+        // parapet and below the board, is mostly air.
+        const s = roofScreenSpan(d)!;
+        const zSlice = d.roofZ + d.roofT + d.signLift * 0.75;
+        const slice = m.Manifold.cube([s.x1 - s.x0, s.y1 - s.y0, 0.4], true).translate([
+          (s.x0 + s.x1) / 2,
+          (s.y0 + s.y1) / 2,
+          zSlice,
+        ]);
+        expect(roof.intersect(slice).volume(), signStyle).toBeLessThan(slice.volume() * 0.35);
+        expect(roof.intersect(slice).volume(), signStyle).toBeGreaterThan(0);
+      }
+      // No flat roof, no rooftop screen -- and the app says why.
+      expect(
+        issuesOf({ style: 'ribbon', roof: 'gable', signPlace: 'roof' }, 'warn').join(),
+      ).toMatch(/rooftop screen needs a flat roof/);
     } finally {
       cleanup();
     }
@@ -1056,7 +1185,7 @@ describe('building miniature — shelf corner, rooftop, wall finish', () => {
   it('builds every type as a corner building, in one piece per part', async () => {
     const m = await kernel();
     try {
-      for (const style of ['apartment', 'office', 'ribbon', 'curtain', 'plain']) {
+      for (const style of ['apartment', 'office', 'ribbon', 'curtain', 'modern', 'plain']) {
         for (const openFront of [false, true]) {
           const d = corner({ style, openFront });
           const plan = makePlan(d);
@@ -1212,6 +1341,140 @@ describe('building miniature — shelf corner, rooftop, wall finish', () => {
     expect(warns).toMatch(/drawn 2\.\d times real size/);
     expect(warns).toMatch(/At 1:48 it prints true to scale/);
     expect(issuesOf({ cladding: 'brick', scale: '48' }, 'warn').join('\n')).not.toMatch(/real size/);
+  });
+
+  it('divides each window into panes by leaving glazing bars standing', async () => {
+    const m = await kernel();
+    try {
+      // Same building and windows, panes on and off: the bars are wall left
+      // standing, so the paned storey has more of it -- and is still one piece.
+      const on = derived({ style: 'modern', windows: 'punched', winWidth: 6, winHeight: 5 });
+      const off = derived({ style: 'modern', windows: 'punched', winWidth: 6, winHeight: 5, panes: 'off' });
+      expect(on.t.panes).toBe(true);
+      expect(off.t.panes).toBe(false);
+      const a = buildStorey(m, on, makePlan(on), 2).solid;
+      const b = buildStorey(m, off, makePlan(off), 2).solid;
+      expect(a.volume()).toBeGreaterThan(b.volume());
+      expect(shells(a)).toBe(1);
+      // Any type can take them.
+      expect(derived({ style: 'office', panes: 'on' }).t.panes).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('opens the shop bays, squared or arched, and lets any type have them', async () => {
+    const m = await kernel();
+    try {
+      const shop = derived({ style: 'modern' });
+      expect(shop.t.ground).toBe('shop');
+      const wall = derived({ style: 'modern', groundFloor: 'wall' });
+      const arched = derived({ style: 'modern', archedShops: true });
+      const vol = (d: ReturnType<typeof derived>) => {
+        const s = buildStorey(m, d, makePlan(d, true), 0).solid;
+        expect(shells(s)).toBe(1);
+        return s.volume();
+      };
+      // Bays take more out of the front than the windows they replace; an
+      // arched head takes less than a square one the same height.
+      expect(vol(shop)).toBeLessThan(vol(wall));
+      expect(vol(arched)).toBeGreaterThan(vol(shop));
+      // The override reaches every type.
+      expect(derived({ style: 'apartment', groundFloor: 'shop' }).t.ground).toBe('shop');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('runs a guard rail round the roof: posts, a top rail and a curb, all one piece', async () => {
+    const m = await kernel();
+    try {
+      for (const patch of [{}, { footprint: 'corner', width: 48, depth: 40, wing: 18 }] as Params[]) {
+        const d = derived({ roof: 'railing', parapet: 3.5, ...patch });
+        const roof = buildRoof(m, d, makePlan(d).core)!;
+        expect(shells(roof)).toBe(1);
+        // As tall as asked.
+        const solidRail = derived({ roof: 'parapet', parapet: 3.5, ...patch });
+        // Mid-height along the back: a rail is mostly gaps, a parapet is solid.
+        const probe = m.Manifold.cube([d.W * 0.8, 2, 0.5], true).translate([
+          0,
+          d.D / 2 - 1,
+          d.roofZ + d.roofT + d.parapetH / 2,
+        ]);
+        const railHit = roof.intersect(probe).volume();
+        const wallHit = buildRoof(m, solidRail, makePlan(solidRail).core)!.intersect(probe).volume();
+        expect(railHit, JSON.stringify(patch)).toBeGreaterThan(0);
+        expect(railHit, JSON.stringify(patch)).toBeLessThan(wallHit * 0.6);
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('builds the commercial block: shops, sign board, framed windows, blades, cornice', async () => {
+    const m = await kernel();
+    try {
+      const preset = buildingGenerator.presets!.find((x) => x.label.startsWith('Commercial:'))!;
+      const p = paramsWith(preset.values);
+      const d = derive(p);
+      expect(d.t.label).toBe('Commercial');
+      const plan = makePlan(d);
+      for (let i = 0; i < d.floors; i++) {
+        const solid = buildStorey(m, d, i === 0 && d.groundOpen ? makePlan(d, true) : plan, i).solid;
+        expect(shells(solid), `storey ${i}`).toBe(1);
+      }
+      const roof = buildRoof(m, d, plan.core)!;
+      expect(shells(roof)).toBe(1);
+
+      const out = buildingGenerator.build(p, ctxFor(m));
+      const type = out.readouts?.['Type'] ?? '';
+      for (const word of ['paned windows', 'window surrounds and sills', 'glazed shop bays', 'shop sign board', 'blade signs', 'cornice', 'on the roof']) {
+        expect(type, word).toContain(word);
+      }
+      // The blades stand further out from the front than anything else on the
+      // upper floors; the cornice spreads past the walls all round the roof.
+      const upper = buildStorey(m, d, plan, 1).solid.boundingBox();
+      expect(-upper.min[1]! - d.D / 2).toBeGreaterThan(d.perFt * 2.5);
+      expect(roof.boundingBox().max[0]! - d.W / 2).toBeGreaterThan(d.perFt);
+      // The shop bays really open the street front: a ground floor with them is
+      // lighter than the same floor walled up -- the door alone would not do it.
+      const walled = derive(paramsWith({ ...preset.values, groundFloor: 'wall' }));
+      const shopVol = buildStorey(m, d, makePlan(d, true), 0).solid.volume();
+      const wallVol = buildStorey(m, walled, makePlan(walled, true), 0).solid.volume();
+      // Glazed, so each bay takes out only its reveal: at least half the bays'
+      // area less the windows they replace, times the reveal depth.
+      const reveal = d.extT - d.paneT;
+      const bays = 2 * 13 * 7.5;
+      const windows = windowCentres(d, d.W).length * 3 * 5.5;
+      expect(wallVol - shopVol).toBeGreaterThan(0.5 * (bays - windows) * d.perFt * d.perFt * reveal);
+      // Five pieces on one plate, with the 10 mm gap.
+      const plates = packPlates(out.parts, [256, 256], buildingGenerator.plateGap);
+      expect(plates.plates.length).toBe(1);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('builds every Modern preset in one piece per part, with a stair that fits', async () => {
+    const m = await kernel();
+    try {
+      const presets = buildingGenerator.presets!.filter((x) => x.label.startsWith('Modern:'));
+      expect(presets.length).toBe(9);
+      for (const preset of presets) {
+        const p = paramsWith(preset.values);
+        const d = derive(p);
+        const warns = (buildingGenerator.validate?.(p) ?? []).map((i) => i.message).join('\n');
+        expect(warns, preset.label).not.toMatch(/shafts have been left empty|rooms fit/);
+        const plan = makePlan(d);
+        for (let i = 0; i < d.floors; i++) {
+          const solid = buildStorey(m, d, i === 0 && d.groundOpen ? makePlan(d, true) : plan, i).solid;
+          expect(shells(solid), `${preset.label} storey ${i}`).toBe(1);
+        }
+        expect(shells(buildRoof(m, d, plan.core)!), `${preset.label} roof`).toBe(1);
+      }
+    } finally {
+      cleanup();
+    }
   });
 
   it('builds the shelf-corner preset as a stack that fits one plate', async () => {

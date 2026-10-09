@@ -8,7 +8,7 @@ import { depth, makePlan, width, type Plan } from './plan';
 import { buildBase } from './parts/base';
 import { claddingSize, claddingTooThin } from './parts/cladding';
 import { balconyLimit } from './parts/facade';
-import { buildRoof } from './parts/roof';
+import { buildRoof, roofScreenFits, roofScreenWanted } from './parts/roof';
 import { buildRooftop, flatDeck, ROOFTOP_LABEL, ROOFTOP_MIN_FT, rooftopFits } from './parts/rooftop';
 import { faceLen, faces, frontFace, windowCentres } from './parts/shape';
 import { buildStorey } from './parts/storey';
@@ -161,6 +161,15 @@ function validate(p: Params): Issue[] {
     });
   }
 
+  const parapet = (d.roof === 'parapet' || d.roof === 'penthouse') && d.parapetH > 0;
+  if (parapet && d.parapetTScaled < d.minWall - 1e-9) {
+    issues.push({
+      level: 'warn',
+      message: `A ${d.parapetTRealIn} in parapet is ${d.parapetTScaled.toFixed(2)} mm at 1:${d.scale}, under the ${d.minWall.toFixed(2)} mm a ${d.nozzle} mm nozzle can lay. It is being printed ${d.parapetT.toFixed(2)} mm thick, which reads as a ${asIn(d.parapetT).toFixed(1)} in wall.`,
+      paramIds: ['parapetWall', 'nozzle', 'scale'],
+    });
+  }
+
   // --- openings
   if (d.windows === 'punched' && d.pitch < d.winW + d.perFt) {
     issues.push({
@@ -299,6 +308,13 @@ function validate(p: Params): Issue[] {
   }
 
   // --- what stands on the roof
+  if (roofScreenWanted(d) && !roofScreenFits(d)) {
+    issues.push({
+      level: 'warn',
+      message: 'A rooftop screen needs a flat roof to stand on, and this one is pitched or open, so the screen has been left off. Choose a flat roof, or put the screen on the facade.',
+      paramIds: ['signPlace', 'roof'],
+    });
+  }
   if (flatDeck(d) && d.rooftop !== 'empty' && !rooftopFits(d, plan.core)) {
     issues.push({
       level: 'warn',
@@ -363,8 +379,14 @@ function validate(p: Params): Issue[] {
   // plate at 1:144 needs three plates at 1:100. Predicted here, and named in
   // the currency the control is in -- a standard scale, never 1:137.
   const pitched = d.roof === 'gable' || d.roof === 'hip';
-  const partW = pitched ? d.W + 2 * d.eaves : d.W + 2 * d.bandProj;
-  const partD = pitched ? d.D + 2 * d.eaves : d.D + 2 * d.bandProj;
+  // What stands proud of the walls on every storey: a band. (The shop canopy is
+  // on one storey only, and the app packs the real pieces and says so if that
+  // one spills over.) On a pitched roof the eaves may be wider still. On a
+  // corner building it is trimmed flush on the shelf side, so it counts once.
+  const proud = d.bandProj;
+  const sides = d.shape === 'corner' ? 1 : 2;
+  const partW = d.W + sides * (pitched ? Math.max(d.eaves, proud) : proud);
+  const partD = d.D + sides * (pitched ? Math.max(d.eaves, proud) : proud);
   const pieces = d.split === 'storeys' ? d.floors + (d.roof === 'none' ? 0 : 1) : 1;
   const plates = platesFor(d.bed, partW, partD, pieces);
 
@@ -412,7 +434,13 @@ function overallSize(parts: readonly Part[]): [number, number, number] | null {
   return [max[0]! - min[0]!, max[1]! - min[1]!, max[2]! - min[2]!];
 }
 
-const CLADDING_WORDS: Readonly<Record<Derived['cladding'], string>> = {
+const SCREEN_WORDS: Readonly<Record<Derived['signStyle'], string>> = {
+  framed: 'framed blank billboard',
+  slim: 'slim screen',
+  tiled: 'tiled video wall',
+};
+
+const CLADDING_WORDS:Readonly<Record<Derived['cladding'], string>> = {
   smooth: '',
   brick: 'brick walls',
   stone: 'ashlar stone walls',
@@ -427,7 +455,7 @@ function readouts(d: Derived, plan: Plan, parts: readonly Part[] = []): Record<s
   // wall away and with it every feature that was standing on it, and a readout
   // that still listed the entrance canopy would be describing a canopy that is
   // not there.
-  const flat = d.roof === 'flat' || d.roof === 'parapet';
+  const flat = d.roof === 'flat' || d.roof === 'parapet' || d.roof === 'railing';
   const front = !d.openFront;
   const clad = claddingSize(d);
   const facade = [
@@ -444,11 +472,22 @@ function readouts(d: Derived, plan: Plan, parts: readonly Part[] = []): Record<s
       : '',
     d.glazing ? 'glazed openings' : '',
     d.doorLeaves ? 'hung doors' : '',
-    front && d.t.sign ? 'framed blank billboard' : '',
+    d.t.sign && d.signPlace === 'facade' && front && d.floors > 1
+      ? `${SCREEN_WORDS[d.signStyle]} up the front`
+      : '',
+    roofScreenFits(d) ? `${SCREEN_WORDS[d.signStyle]} on the roof` : '',
     front && d.t.canopy ? 'entrance canopy' : '',
     d.t.tower && d.bulkhead && flat && plan.core && d.rooftop !== 'helipad' ? 'stair tower' : '',
     d.roof === 'penthouse' ? 'rooftop penthouse' : '',
     d.t.screen && (d.roof === 'parapet' || d.roof === 'penthouse') ? 'louvred parapet' : '',
+    d.t.panes && d.windows === 'punched' ? 'paned windows' : '',
+    d.t.trim && d.windows === 'punched' ? 'window surrounds and sills' : '',
+    front && d.t.fascia && d.t.ground === 'shop' ? 'shop sign board' : '',
+    front && d.t.blades && d.floors > 1 ? 'blade signs' : '',
+    d.t.cornice && (flat || d.roof === 'penthouse') ? 'cornice' : '',
+    front && d.t.ground === 'shop' ? 'glazed shop bays' : '',
+    d.t.awning && d.floors > 1 ? 'shop canopy' : '',
+    d.roof === 'railing' ? 'roof guard rail' : '',
     clad
       ? `${CLADDING_WORDS[d.cladding]}${clad.blowup > 1.05 ? ` (drawn ${clad.blowup.toFixed(1)}x real size)` : ''}`
       : '',
@@ -737,8 +776,24 @@ export const buildingGenerator: Generator = {
       values: {},
     },
     {
-      label: 'Commercial ribbon, 1:144',
+      // The old city corner block of the reference photo: blue lap siding,
+      // shops along the street under a sign board, tall paned windows in white
+      // surrounds, blade signs at the ends, a cornice, and the billboard up on
+      // its steel tower on the roof. Five pieces, one plate.
+      label: 'Commercial: corner shop block, 1:144',
       values: {
+        style: 'commercial', width: 36, depth: 30, floors: 4, floorHeight: 10, tallGround: true,
+        groundHeight: 13, entranceWidth: 4, entranceHeight: 8.5, winWidth: 3, winHeight: 5.5,
+        winSill: 2.5, winPitch: 6.5, glazing: true, coreDepth: 13, minRoom: 6, cladding: 'siding',
+        roof: 'parapet', parapet: 3, signPlace: 'roof', signMount: 'frame', signLift: 10,
+        signHeight: 13, signWidth: 28, signStyle: 'framed',
+        wallColor: '#4e7da3', roofColor: '#4a4d52',
+      },
+    },
+    {
+      label: 'Ribbon block, 1:144',
+      values: {
+        signPlace: 'facade',
         style: 'ribbon', width: 54, depth: 40, floors: 7, floorHeight: 10,
         tallGround: true, groundHeight: 14, winHeight: 5, winSill: 3, chamfer: 8,
         signWidth: 15, roof: 'penthouse', parapet: 4, penthouseHeight: 10, glazing: true,
@@ -761,6 +816,109 @@ export const buildingGenerator: Generator = {
         minRoom: 8, core: false, roof: 'gable', roofPitch: 38, windows: 'punched',
         winWidth: 3, winPitch: 7, entranceWidth: 3.5, groundOpen: false, balconyWidth: 45,
         cladding: 'brick', wallColor: '#c98b6b', roofColor: '#4a4038',
+      },
+    },
+    // ---- Modern city buildings, after the white model-railway kits. Shared:
+    // white walls, glazed openings, a light roof. Each differs where the real
+    // ones do -- the ground floor, the windows and the roof.
+    {
+      // Low block over a row of open garage bays on columns, guard rail round
+      // the roof.
+      label: 'Modern: garage block',
+      values: {
+        style: 'modern', width: 44, depth: 30, floors: 3, floorHeight: 9.5, tallGround: true,
+        groundHeight: 11, groundFloor: 'frontPilotis', shopfront: 'open', winWidth: 4, winHeight: 4,
+        winSill: 3, winPitch: 9, glazing: true, entrance: false, coreWidth: 8, coreDepth: 12, minRoom: 6, roof: 'railing', parapet: 3.5,
+        wallColor: '#efefeb', roofColor: '#dcdcd6',
+      },
+    },
+    {
+      // Notched-corner tower: wide banded windows on both arms, the entrance
+      // in the corner under a canopy.
+      label: 'Modern: notched-corner tower',
+      values: {
+        style: 'modern', footprint: 'corner', width: 34, depth: 32, wing: 17, floors: 7,
+        floorHeight: 9.5, winWidth: 7, winHeight: 4.5, winSill: 3, winPitch: 9, glazing: true,
+        entranceWidth: 5, entranceHeight: 8.5, awningDepth: 2.5, coreWidth: 7, coreDepth: 11, rooms: 3,
+        roof: 'parapet', parapet: 2.5, wallColor: '#ececea', roofColor: '#d8d8d4',
+      },
+    },
+    {
+      // Slim tower: one wide paned window a floor, a guard rail and a stair
+      // head on the roof.
+      label: 'Modern: slim tower',
+      values: {
+        style: 'modern', width: 24, depth: 30, floors: 7, floorHeight: 9.5, winWidth: 9,
+        winHeight: 4, winSill: 3, winPitch: 12, glazing: true, minRoom: 6, coreWidth: 7,
+        coreDepth: 10, entranceWidth: 5, awningDepth: 2, roof: 'railing', parapet: 3.5,
+        bulkhead: true, wallColor: '#eeeeea', roofColor: '#d9d9d4',
+      },
+    },
+    {
+      // Panelled tower with a stepped top: a grid of square windows on precast
+      // panels, and a set-back storey on the roof.
+      label: 'Modern: stepped panel tower',
+      values: {
+        style: 'modern', width: 34, depth: 30, floors: 6, floorHeight: 9.5, winWidth: 3,
+        winHeight: 3.5, winSill: 3, winPitch: 5, panes: 'off', glazing: true, cladding: 'panels',
+        groundFloor: 'shop', awningDepth: 1.5, roof: 'penthouse', parapet: 2, penthouseHeight: 9,
+        wallColor: '#ededea', roofColor: '#dadad6',
+      },
+    },
+    {
+      // Arcade tower: the ground floor open under the front on columns with
+      // glazing behind, paned window bands above, a plant box on the roof.
+      label: 'Modern: arcade tower',
+      values: {
+        style: 'modern', width: 32, depth: 30, floors: 6, floorHeight: 9.5, tallGround: true,
+        groundHeight: 12, groundFloor: 'frontPilotis', shopfront: 'glazed', winWidth: 7,
+        winHeight: 4, winSill: 3, winPitch: 10, glazing: true, coreWidth: 8, coreDepth: 13, minRoom: 6,
+        roof: 'parapet', parapet: 2, bulkhead: true, wallColor: '#efeeea', roofColor: '#d9d8d3',
+      },
+    },
+    {
+      // Shop block: paned windows over glazed shop bays under a thin canopy,
+      // a guard rail round the roof. Four pieces to a plate.
+      label: 'Modern: shop block',
+      values: {
+        style: 'modern', width: 40, depth: 30, floors: 3, floorHeight: 10, tallGround: true,
+        groundHeight: 12, winWidth: 5, winHeight: 5, winSill: 2.5, winPitch: 8, glazing: true,
+        entranceWidth: 6, entranceHeight: 9, awningDepth: 3, coreWidth: 9, coreDepth: 13, minRoom: 6,
+        roof: 'railing', parapet: 3.5, bulkhead: true,
+        wallColor: '#eeede8', roofColor: '#d6d5cf',
+      },
+    },
+    {
+      // Townhouse with arched shop windows: three storeys on a deep plot,
+      // round-headed bays with fanlights at the ground floor.
+      label: 'Modern: arched townhouse',
+      values: {
+        style: 'modern', width: 28, depth: 36, floors: 3, floorHeight: 10, tallGround: true,
+        groundHeight: 13, winWidth: 3.5, winHeight: 5, winSill: 2.5, winPitch: 6.5, glazing: true,
+        archedShops: true, entranceWidth: 4, entranceHeight: 10, awningDepth: 1, core: false,
+        rooms: 4, roof: 'flat', wallColor: '#e3ebe8', roofColor: '#d3dbd8',
+      },
+    },
+    {
+      // Office tower with a glazed stripe running its full height, paned
+      // punched windows either side, on a stone base.
+      label: 'Modern: glazed-stripe tower',
+      values: {
+        style: 'curtain', width: 40, depth: 30, floors: 8, floorHeight: 9.5, panes: 'on',
+        winWidth: 4, winHeight: 4.5, winSill: 3, winPitch: 7, glazing: true, stripes: 1,
+        stripeWidth: 5, roof: 'parapet', parapet: 2.5, wallColor: '#ecebe7', roofColor: '#d7d6d1',
+      },
+    },
+    {
+      // L-shaped tower on precast panels, the entrances under canopies in the
+      // courtyard.
+      label: 'Modern: L-shaped tower',
+      values: {
+        style: 'modern', footprint: 'corner', width: 40, depth: 36, wing: 17, floors: 6,
+        floorHeight: 9.5, winWidth: 4, winHeight: 4.5, winSill: 3, winPitch: 7, glazing: true,
+        entranceWidth: 5, entranceHeight: 8.5, awningDepth: 3, coreWidth: 7, coreDepth: 11, rooms: 5,
+        cladding: 'panels', roof: 'railing', parapet: 3.5,
+        wallColor: '#e9ece8', roofColor: '#cfd3cf',
       },
     },
     {

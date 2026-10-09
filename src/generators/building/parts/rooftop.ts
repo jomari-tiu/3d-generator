@@ -1,7 +1,7 @@
 import type { CrossSection, Manifold, ManifoldToplevel, Vec2 } from 'manifold-3d';
 import type { Derived, Rooftop } from '../geometry';
 import { area, depth, width, type Rect } from '../plan';
-import { hasBulkhead, penthouseSpan } from './roof';
+import { hasBulkhead, penthouseSpan, roofScreenSpan } from './roof';
 import { innerCorner, isCorner } from './shape';
 
 /**
@@ -39,7 +39,7 @@ export const ROOFTOP_LABEL: Readonly<Record<Exclude<Rooftop, 'empty'>, string>> 
 
 /** Is there a deck for anything to stand on? */
 export function flatDeck(d: Derived): boolean {
-  return d.roof === 'flat' || d.roof === 'parapet' || d.roof === 'penthouse';
+  return d.roof === 'flat' || d.roof === 'parapet' || d.roof === 'penthouse' || d.roof === 'railing';
 }
 
 const overlaps = (a: Rect, b: Rect): boolean =>
@@ -62,7 +62,7 @@ function clearOf(r: Rect, o: Rect | null): Rect {
  * plant room over the core. On a corner building, the longer of the two arms.
  */
 export function deckSpan(d: Derived, core: Rect | null): Rect | null {
-  const t = d.extT + Math.max(d.perFt, d.minWall);
+  const t = (d.roof === 'flat' ? 0 : d.parapetT) + Math.max(d.perFt, d.minWall);
   const c = d.chamfer * 0.6;
   let candidates: Rect[];
   if (isCorner(d)) {
@@ -81,9 +81,11 @@ export function deckSpan(d: Derived, core: Rect | null): Rect | null {
       ? { x0: core.x0 - d.extT - t, x1: core.x1 + d.extT + t, y0: core.y0 - d.extT - t, y1: core.y1 + d.extT + t }
       : null;
   const pentKeepOut = pent ? { x0: pent.x0 - t, x1: pent.x1 + t, y0: pent.y0 - t, y1: pent.y1 + t } : null;
+  const scr = roofScreenSpan(d);
+  const screenKeepOut = scr ? { x0: scr.x0 - t, x1: scr.x1 + t, y0: scr.y0 - t, y1: scr.y1 + t } : null;
 
   const clear = candidates
-    .map((r) => clearOf(clearOf(r, pentKeepOut), plant))
+    .map((r) => clearOf(clearOf(clearOf(r, pentKeepOut), plant), screenKeepOut))
     .filter((r) => width(r) > 0 && depth(r) > 0);
   if (clear.length === 0) return null;
   return clear.reduce((a, b) => (Math.min(width(b), depth(b)) > Math.min(width(a), depth(a)) ? b : a));

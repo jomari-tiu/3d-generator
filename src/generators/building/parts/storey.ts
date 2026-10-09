@@ -182,15 +182,216 @@ function windowCutters(m: ManifoldToplevel, d: Derived, level: number): Manifold
 
   const out: Manifold[] = [];
   const inM = glazedDepth(d) - d.extT;
+  const shop = level === 0 && d.t.ground === 'shop';
   for (const face of faces(d)) {
     // No wall means no windows -- there is nothing left to punch. A shelf
     // wall has a wall, but the only thing on the other side of it is the wall
     // of the room the shelf is in.
     if (face.blank || cutAway(d, face)) continue;
+    // A shop front has shop bays in place of windows -- see shopBays().
+    if (shop && face.front) continue;
     for (const c of windowCentres(d, faceLen(face))) {
       out.push(
-        faceBox(m, d, face, faceMid(face) + c, d.winW, band.sill, band.head, faceOut(d), inM),
+        paned(m, d, face, faceMid(face) + c, d.winW, band.sill, band.head, faceOut(d), inM),
       );
+    }
+  }
+  return out;
+}
+
+/**
+ * A raised surround round every punched window, and a sill under it.
+ *
+ * Standing proud of the face, so they are added after every cut and nothing
+ * aimed at the wall can reach them; rooted a little into the wall so they are
+ * welded on. The sill stands out further than the surround -- the ledge that
+ * makes a window read as a window in a facade of a hundred of them -- and is
+ * shallow enough, at a millimetre, to print without support under it.
+ */
+function windowTrims(m: ManifoldToplevel, d: Derived, level: number): Manifold[] {
+  if (!d.t.trim || d.windows !== 'punched') return [];
+  const band = windowBand(d, level);
+  if (!band) return [];
+  const z0 = d.levelZ[level]!;
+  const top = z0 + d.levelH[level]!;
+  const floor = z0 + d.slabT;
+  const shop = level === 0 && d.t.ground === 'shop';
+  const tw = Math.max(d.minWall, d.perFt * 0.45);
+  const proud = Math.max(d.minWall * 0.75, d.perFt * 0.25);
+  const sillP = Math.min(proud * 1.8, proud + 0.6);
+  const root = 0.3 - d.extT;
+  const out: Manifold[] = [];
+  for (const face of faces(d)) {
+    if (face.blank || cutAway(d, face)) continue;
+    if (shop && face.front) continue;
+    for (const c of windowCentres(d, faceLen(face))) {
+      const x = faceMid(face) + c;
+      const lo = Math.max(floor, band.sill - tw);
+      const hi = Math.min(top, band.head + tw);
+      const surround = faceBox(m, d, face, x, d.winW + 2 * tw, lo, hi, proud, root).subtract(
+        faceBox(m, d, face, x, d.winW, band.sill, band.head, proud + 1, root + 0.2),
+      );
+      out.push(surround);
+      const sillLo = Math.max(floor, lo - tw * 0.6);
+      out.push(faceBox(m, d, face, x, d.winW + 3 * tw, sillLo, lo + tw * 0.5, sillP, root));
+    }
+  }
+  return out;
+}
+
+/**
+ * Blank blade signs standing out square from the front, one near each end,
+ * up the upper floors -- the hanging "APARTMENTS" and "PAWN" boards of an old
+ * commercial street. Blank, like every sign here, for a decal or paint.
+ *
+ * Built whole and cut storey by storey, as the screen is, so the pieces stack.
+ * The bottom edge is cut back at 45 degrees toward the wall: a blade is a
+ * plate standing out from the facade, and a square bottom edge would be an
+ * overhang the full depth of it.
+ */
+function bladeSigns(m: ManifoldToplevel, d: Derived, z0: number, h: number): Manifold[] {
+  if (!d.t.blades || d.floors < 2 || d.openFront) return [];
+  const f = frontFace(d);
+  const len = faceLen(f);
+  const cs = windowCentres(d, len);
+  const xs =
+    cs.length >= 2
+      ? [faceMid(f) + (cs[0]! + cs[1]!) / 2, faceMid(f) + (cs[cs.length - 2]! + cs[cs.length - 1]!) / 2]
+      : [f.c0 + d.pier / 2, f.c1 - d.pier / 2];
+  const t = Math.max(1.5 * d.minWall, d.perFt * 0.7);
+  const reach = Math.max(d.perFt * 3, 4 * d.minWall);
+  const zs = d.levelZ[1]! + d.perFt * 1.5;
+  const ze = Math.min(zs + d.perFt * 14, d.roofZ - d.perFt);
+  if (ze - zs < reach + d.perFt) return [];
+  const s0 = Math.max(z0, zs);
+  const s1 = Math.min(z0 + h, ze);
+  if (s1 - s0 < 1e-3) return [];
+  // Profile in (out from the face, height); its sign follows the face, so the
+  // blade stands outward whichever way the front faces.
+  const a = (o: number) => f.side * o;
+  const profile: [number, number][] = [
+    [a(-0.3), zs],
+    [a(reach), zs + reach],
+    [a(reach), ze],
+    [a(-0.3), ze],
+  ];
+  const section = m.CrossSection.ofPolygons([profile], 'NonZero');
+  return [...new Set(xs.map((x) => Math.round(x * 1000) / 1000))].map((x) =>
+    // u -> y, v -> z, extrusion -> x: the same turn as everywhere else here.
+    section
+      .extrude(t)
+      .rotate([90, 0, 90])
+      .translate([x - t / 2, f.at, 0])
+      .intersect(m.Manifold.cube([t + 2, 2 * reach + 4, s1 - s0], true).translate([x, f.at, (s0 + s1) / 2])),
+  );
+}
+
+/**
+ * An opening's cutter with its glazing bars left out of it.
+ *
+ * Bars are wall that was never cut, the same as a ribbon's mullions, so they
+ * cannot come away from the wall they have always been: a mullion every couple
+ * of feet, and a transom across the upper third once the opening is tall
+ * enough to have one. Glazed, they stand in front of the pane; unglazed, each
+ * still runs jamb to jamb or sill to head. Without panes, the plain cutter.
+ */
+function paned(
+  m: ManifoldToplevel,
+  d: Derived,
+  face: Face,
+  centre: number,
+  w: number,
+  z0: number,
+  z1: number,
+  outM: number,
+  inM: number,
+  arch = false,
+): Manifold {
+  // An arched head is a half-round on top of the opening, springing from the
+  // point one half-width below the head. It needs no bridge: every course of
+  // it is held by the course below.
+  const spring = arch ? z1 - w / 2 : z1;
+  let cut = faceBox(m, d, face, centre, w, z0, spring + (arch ? 0.01 : 0), outM, inM);
+  if (arch && spring > z0) cut = cut.add(archHead(m, d, face, centre, w, spring, outM, inM));
+  if (!d.t.panes) return cut;
+  const bar = d.paneBar;
+  const lights = Math.max(1, Math.round(w / (d.perFt * 2.5)));
+  const bars: Manifold[] = [];
+  if (w / lights >= 3 * bar) {
+    for (let i = 1; i < lights; i++) {
+      const c = centre - w / 2 + (i * w) / lights;
+      bars.push(faceBox(m, d, face, c, bar, z0 - 0.1, z1 + 0.1, outM + 1, inM + 1));
+    }
+  }
+  // The transom: across the spring line of an arch, which makes its head a
+  // fanlight, or across the top third of a square opening tall enough for one.
+  const t = arch ? spring : z0 + (z1 - z0) * 0.7;
+  if ((arch && spring - z0 >= 3 * bar) || (!arch && z1 - z0 >= d.perFt * 4 && (z1 - z0) * 0.3 >= 3 * bar)) {
+    bars.push(faceBox(m, d, face, centre, w + 0.2, t - bar / 2, t + bar / 2, outM + 1, inM + 1));
+  }
+  return bars.length > 0 ? cut.subtract(m.Manifold.union(bars)) : cut;
+}
+
+/** The half-round head of an arched opening, as a cylinder through the wall. */
+function archHead(
+  m: ManifoldToplevel,
+  d: Derived,
+  face: Face,
+  centre: number,
+  w: number,
+  spring: number,
+  outM: number,
+  inM: number,
+): Manifold {
+  const near = face.at + face.side * outM;
+  const far = face.at - face.side * (d.extT + inM);
+  const thick = Math.abs(near - far);
+  const mid = (near + far) / 2;
+  // A cylinder stands along Z; laid on its side it runs through the wall.
+  const drum = m.Manifold.cylinder(thick, w / 2, w / 2, 48, true);
+  const turned = face.alongX ? drum.rotate([90, 0, 0]) : drum.rotate([0, 90, 0]);
+  return turned.translate(face.alongX ? [centre, mid, spring] : [mid, centre, spring]);
+}
+
+/**
+ * Glazed shop bays across the front of the ground floor: one per structural
+ * bay, from a low kick plate to the entrance head, with a pier between each.
+ * The bay the front door is in is left to the door.
+ */
+function shopBays(m: ManifoldToplevel, d: Derived): Manifold[] {
+  if (d.t.ground !== 'shop' || d.openFront) return [];
+  const f = frontFace(d);
+  const floor = d.levelZ[0]! + d.slabT;
+  const top = Math.min(
+    floor + d.entranceH,
+    d.levelZ[0]! + d.levelH[0]! - Math.max(d.minWall, d.perFt * 0.5),
+  );
+  const sill = floor + Math.max(d.perFt, d.minWall);
+  if (top - sill < d.minWall) return [];
+  const inM = glazedDepth(d) - d.extT;
+  const pier = Math.max(d.perFt * 1.5, 2 * d.extT);
+  const half = faceLen(f) / 2;
+
+  // A shop window is a display window, not an upstairs window at street level:
+  // a run of them either side of the door, each as near 10 ft as divides its
+  // run evenly, with a pier between each -- the way a row of shops is set out,
+  // and why the door never has to be dodged.
+  const runs: [number, number][] = d.entrance
+    ? [
+        [-half + d.pier, -d.entranceW / 2 - pier],
+        [d.entranceW / 2 + pier, half - d.pier],
+      ]
+    : [[-half + d.pier, half - d.pier]];
+  const out: Manifold[] = [];
+  for (const [a, b] of runs) {
+    const run = b - a;
+    if (run < d.perFt * 2) continue;
+    const n = Math.max(1, Math.round(run / (d.perFt * 10)));
+    const w = (run - (n - 1) * pier) / n;
+    if (w < d.minWall) continue;
+    for (let k = 0; k < n; k++) {
+      const c = a + w / 2 + k * (w + pier);
+      out.push(paned(m, d, f, faceMid(f) + c, w, sill, top, faceOut(d), inM, d.archedShops));
     }
   }
   return out;
@@ -456,6 +657,7 @@ export function buildStorey(
   const openings = [...windowCutters(m, d, level), ...facade.shellCut];
   const entrance = level === 0 ? entranceCutter(m, d) : null;
   if (entrance) openings.push(entrance);
+  if (level === 0) openings.push(...shopBays(m, d));
   if (openings.length > 0) solid = solid.subtract(m.Manifold.union(openings));
 
 
@@ -486,6 +688,8 @@ export function buildStorey(
   // ------------------------------------------- 8, 9. the rest of the facade
   if (facade.lateCut.length > 0) solid = solid.subtract(m.Manifold.union(facade.lateCut));
   if (facade.add.length > 0) solid = solid.add(m.Manifold.union(facade.add));
+  const trims = [...windowTrims(m, d, level), ...bladeSigns(m, d, z0, h)];
+  if (trims.length > 0) solid = solid.add(m.Manifold.union(trims));
 
   // -------------------------------------------- 9. the stacking joint
   //

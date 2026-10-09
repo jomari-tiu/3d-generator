@@ -276,8 +276,8 @@ function pilotis(
   }
 }
 
-/** Where the billboard sits on the front, and how wide its border is. */
-interface Board {
+/** Where the screen sits across its face, and how wide its border is. */
+export interface Board {
   readonly x0: number;
   readonly x1: number;
   /** Width of the raised border, already clamped to the board it goes round. */
@@ -285,88 +285,131 @@ interface Board {
 }
 
 /**
- * The billboard's extent across the front.
+ * The screen's extent across the front.
  *
- * Set out from the end of the FRONT FACE, not from the bounding corner. On a
- * chamfered plan those are not the same place: the corner the panel used to
- * start at is not on the building any more, so a board set out from it hung
- * out over the chamfer void -- a slab of plastic floating beside the wall,
- * perfectly manifold and attached to nothing.
+ * On the facade it is set out from the end of the FRONT FACE, not from the
+ * bounding corner. On a chamfered plan those are not the same place: the corner
+ * the panel used to start at is not on the building any more, so a board set
+ * out from it hung out over the chamfer void -- a slab of plastic floating
+ * beside the wall, perfectly manifold and attached to nothing. On the roof it
+ * is centred over the front, which is where a rooftop screen is put to be seen.
  */
-function signBoard(d: Derived): Board | null {
+export function signBoard(d: Derived): Board | null {
   // Both ends, not just the near one: a deep chamfer on a narrow building
   // leaves a front face a few feet wide, and a board clamped only at the left
   // runs straight off the right-hand chamfer instead.
   const edge = Math.max(d.pier, d.chamfer + d.minWall);
   const f = frontFace(d);
-  const x0 = f.c0 + edge;
   const w = Math.min(d.signW, faceLen(f) - 2 * edge);
-  // Four border widths is the floor: below it the frame has eaten the face it
+  const x0 = d.signPlace === 'roof' ? faceMid(f) - w / 2 : f.c0 + edge;
+  // Four border widths is the floor: below it the border has eaten the face it
   // was supposed to be framing, and the board reads as a solid lump.
-  const frame = Math.min(d.signFrame, w / 5);
+  const frame = Math.min(
+    d.signStyle === 'framed' ? d.signFrame : Math.max(d.minWall, d.perFt * 0.35),
+    w / 5,
+    d.signH / 5,
+  );
   if (w <= 4 * frame || frame < d.minWall) return null;
   return { x0, x1: x0 + w, frame };
 }
 
 /**
- * A blank billboard in a raised frame, up one end of the front.
+ * The screen as one solid, whatever its style: a slab from `yFront` (its face,
+ * toward -Y) back to `yBack`, between `z0` and `z1`, with its face worked.
  *
- * Built one storey at a time, because a storey is what prints: a board spanning
- * four floors as a single solid could not be split with them. The two stiles
- * run the full height of every segment, so stacked storeys butt into one
- * continuous frame, and the rails close it only where the run actually ends.
+ *   framed  a raised border round a recessed blank face -- the billboard
+ *   slim    a thin bezel round a face set a hair back -- a modern LED screen
+ *   tiled   the slim screen with its face cut into a grid of LED tiles
  *
- * The face is left BLANK on purpose. Anything modelled on it -- lettering, a
- * poster, a logo -- is a quarter of a millimetre of relief at 1:144, which is
- * mush off the printer and the wrong thing to commit to anyway: a blank board
- * takes a decal, a paper print or paint, and a modelled one takes nothing.
+ * The face is otherwise left BLANK on purpose. Anything modelled on it --
+ * lettering, a poster, a logo -- is a quarter of a millimetre of relief at
+ * 1:144, which is mush off the printer and the wrong thing to commit to anyway:
+ * a blank board takes a decal, a paper print or paint, and a modelled one
+ * takes nothing.
+ */
+export function screenSolid(
+  m: ManifoldToplevel,
+  d: Derived,
+  b: Board,
+  yFront: number,
+  yBack: number,
+  z0: number,
+  z1: number,
+  recess: number,
+): Manifold {
+  const f = b.frame;
+  const slab = box(m, b.x0, b.x1, yFront, yBack, z0, z1);
+  const face = box(m, b.x0 + f, b.x1 - f, yFront - 1, yFront + recess, z0 + f, z1 - f);
+  let solid = slab.subtract(face);
+  if (d.signStyle !== 'tiled') return solid;
+
+  // LED tiles: joints a nozzle wide up the face and two layers tall across it,
+  // on as close to a 3 ft tile as divides the face evenly.
+  const w = b.x1 - b.x0 - 2 * f;
+  const h = z1 - z0 - 2 * f;
+  const tile = Math.max(d.perFt * 3, 4 * d.nozzle);
+  const nx = Math.max(1, Math.round(w / tile));
+  const nz = Math.max(1, Math.round(h / tile));
+  const deep = yFront + recess + Math.max(2 * d.layer, 0.3);
+  const joints: Manifold[] = [];
+  for (let i = 1; i < nx; i++) {
+    const x = b.x0 + f + (i * w) / nx;
+    joints.push(box(m, x - d.nozzle / 2, x + d.nozzle / 2, yFront - 1, deep, z0 + f, z1 - f));
+  }
+  for (let k = 1; k < nz; k++) {
+    const z = z0 + f + (k * h) / nz;
+    joints.push(box(m, b.x0 + f, b.x1 - f, yFront - 1, deep, z - d.layer, z + d.layer));
+  }
+  if (joints.length > 0) solid = solid.subtract(m.Manifold.union(joints));
+  return solid;
+}
+
+/** How far back the screen's face sits behind its border, by style. */
+export function screenRecess(d: Derived, depth: number): number {
+  return d.signStyle === 'framed'
+    ? Math.min(Math.max(d.minWall * 0.75, d.perFt * 0.4), depth * 0.5)
+    : Math.min(Math.max(2 * d.layer, 0.3), depth * 0.3);
+}
+
+/**
+ * The screen up the front, from the first floor, `signH` tall and stopping at
+ * the roof -- the piece of it on storey `level`.
+ *
+ * Built whole, then cut storey by storey, because a storey is what prints: the
+ * border closes under the screen's first storey and over its last wherever
+ * those happen to fall, and segment meets segment with no seam when the
+ * storeys are stacked.
  */
 function sign(
   m: ManifoldToplevel,
   d: Derived,
-  level: number,
   z0: number,
   h: number,
   work: FacadeWork,
 ): void {
+  if (d.signPlace !== 'facade' || d.floors < 2) return;
   const b = signBoard(d);
   if (!b) return;
-  const f = Math.min(b.frame, h * 0.3);
+  const zs = d.levelZ[1]!;
+  const ze = Math.min(zs + d.signH, d.roofZ);
+  const s0 = Math.max(z0, zs);
+  const s1 = Math.min(z0 + h, ze);
+  if (s1 - s0 < 1e-3) return;
 
-  // The blank face has to stand clear of the spandrel band, or the band runs
-  // straight across the billboard at every floor line; the frame then has to
-  // stand clear of the face, or there is no frame, only a thicker panel.
-  const face = Math.max(d.bandProj + d.minWall * 0.5, d.signProj * 0.5);
-  const proj = Math.max(d.signProj, face + Math.max(d.minWall * 0.75, d.perFt * 0.4));
-  // Through the wall, not onto it. The ribbon window runs behind the board for
+  // The face has to stand clear of the spandrel band, or the band runs
+  // straight across the screen at every floor line; the border then has to
+  // stand clear of the face, or there is no border, only a thicker panel.
+  const faceProj = Math.max(d.bandProj + d.minWall * 0.5, d.signProj * 0.5);
+  const proj = Math.max(d.signProj, faceProj + Math.max(d.minWall * 0.75, d.perFt * 0.4));
+  // Through the wall, not onto it. The ribbon window runs behind the screen for
   // most of its height, so a panel that merely bit into the face would be
   // hanging off the two spandrels it happened to cross. Filling the opening
   // also makes the bay read blind, which is what a wall behind a hoarding is.
   const front = frontFace(d).at;
-  const back = front + d.extT;
-
-  // Where the run ends. A tall building carries two boards -- a big one over
-  // the middle floors and a smaller one above it -- which is what a corner
-  // site with two lettings actually looks like.
-  const railBottom = level === 1;
-  const railTop = level === d.floors - 1 || (d.floors >= 4 && level === d.floors - 2);
-
-  work.add.push(
-    // Stiles, full storey height, so segment meets segment with no seam.
-    box(m, b.x0, b.x0 + f, front - proj, back, z0, z0 + h),
-    box(m, b.x1 - f, b.x1, front - proj, back, z0, z0 + h),
-    box(
-      m,
-      b.x0 + f,
-      b.x1 - f,
-      front - face,
-      back,
-      railBottom ? z0 + f : z0,
-      railTop ? z0 + h - f : z0 + h,
-    ),
-  );
-  if (railBottom) work.add.push(box(m, b.x0, b.x1, front - proj, back, z0, z0 + f));
-  if (railTop) work.add.push(box(m, b.x0, b.x1, front - proj, back, z0 + h - f, z0 + h));
+  const recess = Math.min(screenRecess(d, proj), proj - faceProj);
+  const whole = screenSolid(m, d, b, front - proj, front + d.extT, zs, ze, recess);
+  const piece = whole.intersect(box(m, b.x0 - 1, b.x1 + 1, front - proj - 1, front + d.extT + 1, s0, s1));
+  if (!piece.isEmpty()) work.add.push(piece);
 }
 
 /**
@@ -412,6 +455,46 @@ function canopy(m: ManifoldToplevel, d: Derived, work: FacadeWork): void {
   }
 }
 
+/**
+ * The shop canopy: the edge of the first-floor slab running out over the
+ * ground floor, all round the faces you can see.
+ *
+ * Part of the storey it is the floor of, so it is at the BOTTOM of the printed
+ * piece: every storey prints slab-down, which puts a canopy of any depth flat
+ * on the bed. It bites half the wall thickness, the same as a band, so it is
+ * welded on rather than balanced against the facade.
+ */
+function awning(m: ManifoldToplevel, d: Derived, z0: number): Manifold | null {
+  const ring = footprintSection(m, d, -d.awningD).subtract(footprintSection(m, d, d.extT * 0.5));
+  if (ring.area() <= 0) return null;
+  return m.Manifold.extrude(ring, d.slabT).translate([0, 0, z0]);
+}
+
+/**
+ * The shop sign board: a raised board across the front between the heads of
+ * the shop bays and the first floor, with a recessed blank face for the name.
+ *
+ * It needs a ground floor tall enough to have the room: under about a foot and
+ * a half between the shop heads and the slab above, there is no board to put.
+ */
+function fascia(m: ManifoldToplevel, d: Derived, z0: number, h: number, work: FacadeWork): void {
+  if (d.openFront) return;
+  const f = frontFace(d);
+  const floor = z0 + d.slabT;
+  const shopTop = Math.min(floor + d.entranceH, z0 + h - Math.max(d.minWall, d.perFt * 0.5));
+  const zA = shopTop + Math.max(d.perFt * 0.3, d.minWall);
+  const zB = Math.min(z0 + h, zA + d.perFt * 2.5);
+  if (zB - zA < d.perFt * 1.2) return;
+  const proud = Math.max(d.minWall, d.perFt * 0.35);
+  const x0 = f.c0 + d.pier;
+  const x1 = f.c1 - d.pier;
+  if (x1 - x0 < d.perFt * 4) return;
+  const rim = Math.max(d.minWall, (zB - zA) * 0.15);
+  const board = box(m, x0, x1, f.at - proud, f.at + d.extT * 0.5, zA, zB);
+  const face = box(m, x0 + rim, x1 - rim, f.at - proud - 1, f.at - proud * 0.45, zA + rim, zB - rim);
+  work.add.push(board.subtract(face));
+}
+
 /** Everything this style puts on the outside of one storey. */
 export function storeyFacade(m: ManifoldToplevel, d: Derived, level: number): FacadeWork {
   const work: FacadeWork = { shellCut: [], lateCut: [], add: [] };
@@ -425,12 +508,19 @@ export function storeyFacade(m: ManifoldToplevel, d: Derived, level: number): Fa
   }
   if (ground && t.ground === 'course') work.add.push(bandSolid(m, d, z0, h));
 
+  // Over the shop bays, so on the first floor: the canopy is its slab edge.
+  if (t.fascia && ground && t.ground === 'shop') fascia(m, d, z0, h, work);
+  if (t.awning && level === 1) {
+    const plate = awning(m, d, z0);
+    if (plate) work.add.push(plate);
+  }
+
   // Everything below is on the front face, so a cutaway has nothing to put it
   // on. Skipping it is the honest answer: a balustrade in mid-air is not.
   if (!d.openFront) {
     if (t.balconies && !ground) balcony(m, d, z0, h, work);
     if (t.stripes && !ground) stripes(m, d, z0, h, work);
-    if (t.sign && !ground) sign(m, d, level, z0, h, work);
+    if (t.sign && !ground) sign(m, d, z0, h, work);
     if (t.canopy && ground) canopy(m, d, work);
   }
   // A cutaway has already taken the front wall off, so a front-only open ground

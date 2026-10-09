@@ -13,7 +13,14 @@
  * builders the shared ones start to drift apart.
  */
 
-export type Style = 'apartment' | 'office' | 'ribbon' | 'curtain' | 'plain';
+export type Style =
+  | 'apartment'
+  | 'office'
+  | 'commercial'
+  | 'ribbon'
+  | 'curtain'
+  | 'modern'
+  | 'plain';
 
 /** Where the ground floor differs from the storeys above it. */
 export type Ground =
@@ -24,7 +31,9 @@ export type Ground =
   /** Open on every face, on columns. */
   | 'pilotis'
   /** A projecting base course, for a stone or granite plinth storey. */
-  | 'course';
+  | 'course'
+  /** Glazed shop bays across the front, one per structural bay, in the wall. */
+  | 'shop';
 
 /** Horizontal articulation between storeys. */
 export type Bands =
@@ -60,6 +69,21 @@ export interface StyleTraits {
   readonly canopy: boolean;
   /** A louvred screen punched through the parapet. */
   readonly screen: boolean;
+  /**
+   * A thin slab running out over the ground floor on every face you can see:
+   * the canopy over a row of shopfronts.
+   */
+  readonly awning: boolean;
+  /** Each punched window divided into panes by a mullion and a transom. */
+  readonly panes: boolean;
+  /** A raised surround and a sill round every punched window. */
+  readonly trim: boolean;
+  /** A sign board over the shop bays, across the front. */
+  readonly fascia: boolean;
+  /** Blank blade signs standing out square from the front, up the upper floors. */
+  readonly blades: boolean;
+  /** A cornice finishing the top of the walls. */
+  readonly cornice: boolean;
 }
 
 export const STYLES: Readonly<Record<Style, StyleTraits>> = {
@@ -77,6 +101,12 @@ export const STYLES: Readonly<Record<Style, StyleTraits>> = {
     sign: false,
     canopy: false,
     screen: false,
+    awning: false,
+    panes: false,
+    trim: false,
+    fascia: false,
+    blades: false,
+    cornice: false,
   },
   office: {
     label: 'Office slab',
@@ -92,9 +122,42 @@ export const STYLES: Readonly<Record<Style, StyleTraits>> = {
     sign: false,
     canopy: false,
     screen: false,
+    awning: false,
+    panes: false,
+    trim: false,
+    fascia: false,
+    blades: false,
+    cornice: false,
   },
+  // The old city corner block: shops along the street with a sign board over
+  // them, tall paned windows in raised surrounds above, blade signs standing
+  // out from the corners, a cornice along the top -- and on the roof, the
+  // billboard up on its steel tower (the screen's default place is the roof).
+  commercial: {
+    label: 'Commercial',
+    windows: 'punched',
+    mullions: false,
+    balconies: false,
+    bands: 'none',
+    ground: 'shop',
+    stripes: false,
+    shopfront: false,
+    tower: false,
+    chamfer: false,
+    sign: true,
+    canopy: false,
+    screen: false,
+    awning: false,
+    panes: true,
+    trim: true,
+    fascia: true,
+    blades: true,
+    cornice: true,
+  },
+  // The post-war commercial block: ribbon windows wrapping a chamfered corner
+  // over a ground floor on columns.
   ribbon: {
-    label: 'Commercial ribbon',
+    label: 'Ribbon block',
     windows: 'ribbon',
     mullions: false,
     balconies: false,
@@ -107,6 +170,37 @@ export const STYLES: Readonly<Record<Style, StyleTraits>> = {
     sign: true,
     canopy: false,
     screen: false,
+    awning: false,
+    panes: false,
+    trim: false,
+    fascia: false,
+    blades: false,
+    cornice: false,
+  },
+  // The contemporary city mid-rise of model-railway catalogues: a white box,
+  // punched windows each divided into panes, a ground floor of glazed shop
+  // bays under a thin canopy slab, and -- set by its presets -- a guard rail
+  // round a flat roof with the stair head standing on it.
+  modern: {
+    label: 'Modern',
+    windows: 'punched',
+    mullions: false,
+    balconies: false,
+    bands: 'none',
+    ground: 'shop',
+    stripes: false,
+    shopfront: false,
+    tower: false,
+    chamfer: false,
+    sign: false,
+    canopy: false,
+    screen: false,
+    awning: true,
+    panes: true,
+    trim: false,
+    fascia: false,
+    blades: false,
+    cornice: false,
   },
   // Not one of the four, and not a placeholder either: a house, a shed or a
   // warehouse has no facade articulation at all, and every one of the four
@@ -125,6 +219,12 @@ export const STYLES: Readonly<Record<Style, StyleTraits>> = {
     sign: false,
     canopy: false,
     screen: false,
+    awning: false,
+    panes: false,
+    trim: false,
+    fascia: false,
+    blades: false,
+    cornice: false,
   },
   curtain: {
     label: 'Curtain wall',
@@ -140,6 +240,12 @@ export const STYLES: Readonly<Record<Style, StyleTraits>> = {
     sign: false,
     canopy: true,
     screen: true,
+    awning: false,
+    panes: false,
+    trim: false,
+    fascia: false,
+    blades: false,
+    cornice: false,
   },
 };
 

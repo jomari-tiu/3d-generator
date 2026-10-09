@@ -192,9 +192,15 @@ export function frontBand(m: ManifoldToplevel, d: Derived, thick: number): Cross
   ]);
 }
 
-/** The exterior wall ring, with the front taken off for a cutaway. */
-export function shellSection(m: ManifoldToplevel, d: Derived): CrossSection {
-  const ring = footprintSection(m, d).subtract(footprintSection(m, d, d.extT));
+/**
+ * The exterior wall ring, with the front taken off for a cutaway.
+ *
+ * `thick` is the wall's thickness, measured in from the outer face: the storey
+ * walls by default, and the thinner parapet on the roof, which stands flush
+ * with the facade below it and steps in on the inside.
+ */
+export function shellSection(m: ManifoldToplevel, d: Derived, thick = d.extT): CrossSection {
+  const ring = footprintSection(m, d).subtract(footprintSection(m, d, thick));
   if (!d.openFront) return ring;
   // Dolls'-house cutaway: take the whole front band away, corners included, so
   // the side walls start clean at the front rather than in a stub of return.
