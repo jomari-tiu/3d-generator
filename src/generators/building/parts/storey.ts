@@ -1,7 +1,7 @@
 import type { CrossSection, Manifold, ManifoldToplevel } from 'manifold-3d';
 import { roofAccess, type Derived } from '../geometry';
 import type { Door, Plan, Wall } from '../plan';
-import { faceOut, storeyFacade } from './facade';
+import { faceOut, storeyFacade, stripeSpans } from './facade';
 import { claddingCutter } from './cladding';
 import {
   cornerPiers,
@@ -183,6 +183,11 @@ function windowCutters(m: ManifoldToplevel, d: Derived, level: number): Manifold
   const out: Manifold[] = [];
   const inM = glazedDepth(d) - d.extT;
   const shop = level === 0 && d.t.ground === 'shop';
+  // The glazed stripes run up the upper floors of the front; a window there
+  // would notch the glass, so the windows keep a pier clear of them.
+  const stripes = level > 0 ? stripeSpans(d) : [];
+  const inStripe = (x: number) =>
+    stripes.some(([a, b]) => x + d.winW / 2 > a - d.pier && x - d.winW / 2 < b + d.pier);
   for (const face of faces(d)) {
     // No wall means no windows -- there is nothing left to punch. A shelf
     // wall has a wall, but the only thing on the other side of it is the wall
@@ -191,6 +196,7 @@ function windowCutters(m: ManifoldToplevel, d: Derived, level: number): Manifold
     // A shop front has shop bays in place of windows -- see shopBays().
     if (shop && face.front) continue;
     for (const c of windowCentres(d, faceLen(face))) {
+      if (face.front && inStripe(faceMid(face) + c)) continue;
       out.push(
         paned(m, d, face, faceMid(face) + c, d.winW, band.sill, band.head, faceOut(d), inM),
       );
@@ -226,6 +232,7 @@ function windowTrims(m: ManifoldToplevel, d: Derived, level: number): Manifold[]
     if (shop && face.front) continue;
     for (const c of windowCentres(d, faceLen(face))) {
       const x = faceMid(face) + c;
+      if (face.front && level > 0 && stripeSpans(d).some(([a, b]) => x + d.winW / 2 > a - d.pier && x - d.winW / 2 < b + d.pier)) continue;
       const lo = Math.max(floor, band.sill - tw);
       const hi = Math.min(top, band.head + tw);
       const surround = faceBox(m, d, face, x, d.winW + 2 * tw, lo, hi, proud, root).subtract(

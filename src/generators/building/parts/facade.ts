@@ -124,21 +124,64 @@ export function balconyLimit(d: Derived): number {
   return (isCorner(d) ? d.wing : d.D) * 0.4;
 }
 
-/** Glazed slots running the full height of a storey, up the front. */
-function stripes(m: ManifoldToplevel, d: Derived, z0: number, h: number, work: FacadeWork): void {
+/**
+ * Where the glazed stripes run across the front, as [x0, x1] pairs, or none.
+ *
+ * One answer for the stripes and for the windows: a punched window cut into
+ * the same stretch of wall as a stripe leaves a stepped notch in the glass, so
+ * the windows ask this and keep out of it -- see windowCutters in storey.ts.
+ */
+export function stripeSpans(d: Derived): [number, number][] {
+  if (!d.t.stripes || d.openFront) return [];
   const f = frontFace(d);
   const avail = faceLen(f) - 2 * d.pier;
   const n = d.stripeCount;
   const w = Math.min(d.stripeW, avail / n - d.pier);
-  if (w <= d.minWall) return;
-  // A stripe IS glazing, so it closes with the windows: cut to the pane rather
-  // than through, and the slot reads as glass instead of a slot.
-  const back = f.at + (d.glazing ? d.extT - d.paneT : d.extT + IN);
-  for (let k = 0; k < n; k++) {
+  if (w <= d.minWall) return [];
+  return Array.from({ length: n }, (_, k) => {
     const cx = faceMid(f) - avail / 2 + (avail * (k + 0.5)) / n;
-    work.shellCut.push(
-      box(m, cx - w / 2, cx + w / 2, f.at - faceOut(d), back, z0 + d.slabT, z0 + h + 0.1),
-    );
+    return [cx - w / 2, cx + w / 2] as [number, number];
+  });
+}
+
+/**
+ * A strip of curtain wall running up the front, storey by storey.
+ *
+ * Curtain walling is a frame holding glass, so that is what it is cut as: the
+ * glass is ALWAYS there -- a pane of wall left at the back of the opening,
+ * whatever the window glazing is set to, because a curtain wall without its
+ * glass is a hole down the front of the building showing every floor and
+ * partition behind it -- and the frame is a grid of mullions and a transom
+ * left standing in front of it. The slab edge at the foot of each storey runs
+ * across it as the floor line, the way a real one reads.
+ */
+function stripes(m: ManifoldToplevel, d: Derived, z0: number, h: number, work: FacadeWork): void {
+  const spans = stripeSpans(d);
+  if (spans.length === 0) return;
+  const f = frontFace(d);
+  // To the pane where the wall can spare one; through, only where it cannot.
+  const glass = d.extT - d.paneT >= d.revealMin && d.paneT >= d.nozzle;
+  const back = f.at + (glass ? d.extT - d.paneT : d.extT + IN);
+  const front = f.at - faceOut(d);
+  const z1 = z0 + d.slabT;
+  const z2 = z0 + h + 0.1;
+  const bar = Math.max(d.minWall, d.perFt * 0.5);
+  for (const [x0, x1] of spans) {
+    let cut = box(m, x0, x1, front, back, z1, z2);
+    // Mullions every 4 ft or so, evenly; a transom at the window head.
+    const w = x1 - x0;
+    const n = Math.max(1, Math.round(w / (d.perFt * 4)));
+    const bars: Manifold[] = [];
+    if (w / n >= 3 * bar) {
+      for (let i = 1; i < n; i++) {
+        const x = x0 + (i * w) / n;
+        bars.push(box(m, x - bar / 2, x + bar / 2, front - 1, back + 1, z1 - 0.1, z2 + 0.1));
+      }
+    }
+    const t = Math.min(z1 + d.sill + d.winH, z0 + h - d.perFt * 1.5);
+    if (t - z1 >= 3 * bar) bars.push(box(m, x0 - 0.1, x1 + 0.1, front - 1, back + 1, t - bar / 2, t + bar / 2));
+    if (bars.length > 0) cut = cut.subtract(m.Manifold.union(bars));
+    work.shellCut.push(cut);
   }
 }
 

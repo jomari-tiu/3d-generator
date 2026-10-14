@@ -233,6 +233,36 @@ export class App {
       changed === 0
         ? 'Every setting is already at its default.'
         : `Put ${changed} changed setting${changed === 1 ? '' : 's'} back to default. Browser Back undoes it.`;
+    this.syncPresetSelection();
+  }
+
+  /**
+   * Show the preset the current settings ARE, by name -- or the placeholder
+   * once they are not any of them.
+   *
+   * Matched rather than remembered: picking a preset and then changing one
+   * setting leaves a model that is no longer that preset, and a dropdown still
+   * naming it would be telling you something false. Matching also names the
+   * preset when you arrive by a shared link to one, and when Back returns you
+   * to one.
+   */
+  private syncPresetSelection(): void {
+    const sel = document.getElementById('preset-sel') as HTMLSelectElement | null;
+    if (!sel) return;
+    const matches = (patch: Params): boolean => {
+      const v = coerceAll(this.gen, { ...defaultsOf(this.gen), ...patch });
+      return this.gen.params.every(
+        (s) => JSON.stringify(v[s.id]) === JSON.stringify(this.values[s.id]),
+      );
+    };
+    const builtin = (this.gen.presets ?? []).find((p) => matches(p.values));
+    if (builtin) {
+      sel.value = `builtin:${builtin.label}`;
+      return;
+    }
+    const mine = this.loadStore()[this.gen.id] ?? {};
+    const own = Object.keys(mine).find((name) => matches(mine[name]!));
+    sel.value = own ? `mine:${own}` : '';
   }
 
   // ------------------------------------------------------------------ chrome
@@ -984,9 +1014,10 @@ export class App {
         kind === 'builtin'
           ? this.gen.presets?.find((p) => p.label === name)?.values
           : this.loadStore()[this.gen.id]?.[name];
+      // applyPreset leaves the dropdown naming it -- see syncPresetSelection.
       if (patch) this.applyPreset(patch);
-      sel.value = '';
     };
+    this.syncPresetSelection();
   }
 
   private applyPreset(patch: Params): void {

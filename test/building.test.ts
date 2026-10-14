@@ -8,6 +8,7 @@ import { derive, FT_MM, IN_MM } from '../src/generators/building/geometry';
 import { area, depth, makePlan, width, type Rect } from '../src/generators/building/plan';
 import { buildRoof, roofScreenSpan } from '../src/generators/building/parts/roof';
 import { windowCentres } from '../src/generators/building/parts/shape';
+import { stripeSpans } from '../src/generators/building/parts/facade';
 import { buildStorey, jointAt, pinPositions } from '../src/generators/building/parts/storey';
 import { buildStairs, risersFor, stairFit } from '../src/generators/building/parts/stairs';
 import { cleanup, kernel, loadFont } from './kernel';
@@ -1405,6 +1406,43 @@ describe('building miniature — shelf corner, rooftop, wall finish', () => {
         const wallHit = buildRoof(m, solidRail, makePlan(solidRail).core)!.intersect(probe).volume();
         expect(railHit, JSON.stringify(patch)).toBeGreaterThan(0);
         expect(railHit, JSON.stringify(patch)).toBeLessThan(wallHit * 0.6);
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('glazes the curtain-wall stripes behind a grid, and keeps the windows out of them', async () => {
+    const m = await kernel();
+    try {
+      // Window glazing OFF: the stripe still has its glass.
+      const d = derived({ style: 'curtain', floors: 4, glazing: false });
+      const spans = stripeSpans(d);
+      expect(spans.length).toBe(d.stripeCount);
+      const solid = buildStorey(m, d, makePlan(d), 2).solid;
+      expect(shells(solid)).toBe(1);
+      const front = -d.D / 2;
+      const zMid = d.levelZ[2]! + d.levelH[2]! * 0.45;
+      for (const [a, b] of spans) {
+        // The pane: solid all the way across the stripe at the back of the wall.
+        const pane = m.Manifold.cube([b - a - 1, d.paneT * 0.6, 0.4], true).translate([
+          (a + b) / 2,
+          front + d.extT - d.paneT / 2,
+          zMid,
+        ]);
+        expect(solid.intersect(pane).volume()).toBeCloseTo(pane.volume(), 3);
+        // In front of it: mostly open, but the mullions are there.
+        const face = m.Manifold.cube([b - a - 1, 0.3, 0.4], true).translate([(a + b) / 2, front + 0.2, zMid]);
+        const hit = solid.intersect(face).volume();
+        expect(hit).toBeGreaterThan(0);
+        expect(hit).toBeLessThan(face.volume() * 0.4);
+        // No punched window left inside or beside it.
+        for (const c of windowCentres(d, d.W)) {
+          expect(c + d.winW / 2 <= a - d.pier || c - d.winW / 2 >= b + d.pier
+            || !buildStorey(m, d, makePlan(d), 2).solid.intersect(
+              m.Manifold.cube([d.winW * 0.5, d.extT * 0.5, 0.4], true).translate([c, front + d.extT * 0.75, d.levelZ[2]! + d.slabT + d.sill + d.winH / 2]),
+            ).isEmpty()).toBe(true);
+        }
       }
     } finally {
       cleanup();
