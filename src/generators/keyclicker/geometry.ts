@@ -24,6 +24,16 @@ export interface SwitchSpec {
   /** How far the stem reaches up into the keycap's hollow. */
   readonly stemDepth: number;
   /**
+   * Top of the stem above the plate's top face, at rest. Sets where the cap
+   * rides, which a sunken base has to know: its rim must stay below the cap's
+   * top even with the key held down. Erring LOW is the safe side -- a cap that
+   * really sits higher only stands further proud of the rim. Zero for the
+   * printed variant, whose cap sits in a well instead.
+   */
+  readonly stemTop: number;
+  /** Full key travel. */
+  readonly keyTravel: number;
+  /**
    * Does the body need an open bottom and a cover?
    *
    * A bought switch clips onto the plate from underneath, so it does. The
@@ -45,6 +55,8 @@ export const SWITCHES: Record<string, SwitchSpec> = {
     minPitch: 16.5,
     stem: 'mx',
     stemDepth: 4,
+    stemTop: 10.2,
+    keyTravel: 4,
     hollow: true,
     hardware: 'one MX-style switch per key',
   },
@@ -57,6 +69,8 @@ export const SWITCHES: Record<string, SwitchSpec> = {
     minPitch: 15.5,
     stem: 'choc',
     stemDepth: 3,
+    stemTop: 5,
+    keyTravel: 3,
     hollow: true,
     hardware: 'one Kailh Choc v1 switch per key',
   },
@@ -69,6 +83,8 @@ export const SWITCHES: Record<string, SwitchSpec> = {
     minPitch: 14,
     stem: 'post',
     stemDepth: 3,
+    stemTop: 0,
+    keyTravel: 0,
     hollow: false,
     hardware: 'none',
   },
@@ -93,12 +109,33 @@ export interface Derived {
   readonly capTop: number;
   readonly capCorner: number;
   readonly dish: number;
+  /** Rise of a domed top above its edges. Not the printed switch dome. */
+  readonly capDome: number;
 
   readonly legendSize: number;
   readonly legendDepth: number;
   readonly legendStyle: string;
 
-  // --- base bar
+  // --- base
+  /** 'tray': one sunken pocket for the whole row. 'cells': a housing per key. */
+  readonly baseStyle: string;
+  /** Clearance between a keycap and the pocket wall around it. */
+  readonly keyGap: number;
+  /** Inside of one key's pocket, square. */
+  readonly pocket: number;
+  /** Outside of one cell, square. Cells style only. */
+  readonly cell: number;
+  readonly cellCorner: number;
+  /** Rim above the plate's top face: how far the keys sit down in the base. */
+  readonly rimH: number;
+  /** Z of the plate's top face, which is where the switches clip in. */
+  readonly plateTop: number;
+  /** Z of a keycap's bottom edge at rest, relative to the plate top. */
+  readonly capRest: number;
+  /** How far a key moves when pressed. */
+  readonly keyTravel: number;
+  /** How much of the cap stands above the rim with the key held down. */
+  readonly pressedProud: number;
   readonly plateT: number;
   readonly cavityD: number;
   readonly wallT: number;
@@ -146,7 +183,6 @@ export function derive(p: Params): Derived {
   const legend = legendChars(p);
   const keys = Math.max(1, legend.length);
 
-  const pitch = Number(p.keyPitch);
   const keySize = Number(p.keySize);
   const capH = Number(p.capHeight);
   const capTaperDeg = Number(p.capTaper);
@@ -158,7 +194,12 @@ export function derive(p: Params): Derived {
   );
   const capWall = Math.max(1.2, 3 * nozzle);
   const capCorner = Number(p.capCorner);
-  const dish = p.capDish === true ? Math.max(0.4, capH * 0.12) : 0;
+  // One signed slider: below zero is a dish, above zero a dome.
+  const curve = Number(p.topCurve);
+  const dish = curve < 0 ? -curve : 0;
+  // A dome adds material on top of the edge height rather than taking it out,
+  // so unlike the dish it costs the top face nothing.
+  const capDome = curve > 0 ? curve : 0;
   const legendDepth = Number(p.legendDepth);
 
   const legendStyle = String(p.legendStyle);
@@ -190,9 +231,34 @@ export function derive(p: Params): Derived {
   const cavityD = sw.hollow ? sw.under : 0;
   const coverT = sw.hollow ? Math.max(1.2, 5 * layer) : 0;
 
-  const baseW = keys * pitch + 2 * endWall;
-  const baseD = pitch + 2 * wallT;
-  const baseH = sw.hollow ? plateT + cavityD + coverT : plateT + floorT;
+  // Where a cap rides, measured from the plate's top face. A bought switch
+  // holds it by the stem; the printed one sinks it into its well.
+  const roof = capH - capTop;
+  const capRest = sw.hollow ? sw.stemTop - roof : -wellDepth - (roof - sw.stemDepth);
+  const keyTravel = sw.hollow ? sw.keyTravel : travel;
+
+  const baseStyle = String(p.baseStyle) === 'cells' ? 'cells' : 'tray';
+  const keyGap = Number(p.keyGap);
+  const pocket = keySize + 2 * keyGap;
+  const cell = pocket + 2 * wallT;
+  // Cells share one wall between neighbours, so their spacing is not a free
+  // choice: it is the pocket plus that wall. The tray keeps its pitch slider.
+  const pitch = baseStyle === 'cells' ? pocket + wallT : Number(p.keyPitch);
+
+  // The rim is placed by how much of the CAP it hides at rest, which is the
+  // number you see -- not by a height above a plate you never see.
+  // The printed variant already sinks its caps into wells cut in the plate, so
+  // it gets no rim on top of that.
+  const rimH = sw.hollow ? Math.max(0, capRest + Number(p.keyDepth)) : 0;
+  const pressedProud = capRest - keyTravel + capH - rimH;
+
+  const baseW =
+    baseStyle === 'cells'
+      ? (keys - 1) * pitch + cell
+      : (keys - 1) * pitch + pocket + 2 * endWall;
+  const baseD = cell;
+  const plateTop = sw.hollow ? coverT + cavityD + plateT : floorT + plateT;
+  const baseH = plateTop + rimH;
   const baseCorner = Number(p.baseCorner);
   const chamfer = Math.min(1.2, wallT * 0.5);
 
@@ -204,10 +270,13 @@ export function derive(p: Params): Derived {
   return {
     nozzle, layer, fit, clear,
     sw, legend, keys,
-    pitch, keySize, capH, capTaperDeg, capTopSize, capWall, capTop, capCorner, dish,
+    pitch, keySize, capH, capTaperDeg, capTopSize, capWall, capTop, capCorner, dish, capDome,
     legendSize: Number(p.legendSize),
     legendDepth,
     legendStyle,
+    baseStyle, keyGap, pocket, cell,
+    cellCorner: Number(p.cellCorner),
+    rimH, plateTop, capRest, keyTravel, pressedProud,
     plateT, cavityD, wallT, endWall, baseW, baseD, baseH, baseCorner, chamfer,
     coverT,
     coverBead: Math.max(0.4, wallT * 0.3),

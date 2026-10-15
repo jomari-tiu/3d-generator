@@ -51,11 +51,29 @@ function validate(p: Params): Issue[] {
       paramIds: ['keySize', 'keyPitch'],
     });
   }
-  if (d.keySize + 2 * d.wallT > d.baseD) {
+  // The cavity under the plate is the pocket's own footprint, and a switch's
+  // lower housing has to fit down into it.
+  if (d.sw.cutout > 0 && d.pocket < d.sw.cutout + 1) {
     issues.push({
       level: 'error',
-      message: 'The keycaps are wider than the bar. Widen the pitch or narrow the caps.',
-      paramIds: ['keySize', 'keyPitch', 'wall'],
+      message: `${d.keySize} mm keycaps leave a ${d.pocket.toFixed(1)} mm pocket, and the ${d.sw.label} body needs ${(d.sw.cutout + 1).toFixed(0)} mm under the plate. Use bigger keycaps or a wider gap.`,
+      paramIds: ['keySize', 'keyGap'],
+    });
+  }
+
+  // --- the rim against a key that is held down. The printed variant has no
+  // rim: its own travel check further down covers the well it sinks into.
+  if (d.sw.hollow && d.pressedProud < 0) {
+    issues.push({
+      level: 'error',
+      message: `Held down, a key would sink ${(-d.pressedProud).toFixed(1)} mm below the rim, out of reach of your thumb. Sink the keys less or make the caps taller.`,
+      paramIds: ['keyDepth', 'capHeight'],
+    });
+  } else if (d.sw.hollow && d.pressedProud < 1) {
+    issues.push({
+      level: 'warn',
+      message: `Held down, a key stands only ${d.pressedProud.toFixed(1)} mm above the rim - a fingertip will find the rim before the key bottoms out. Sink the keys less or make the caps taller.`,
+      paramIds: ['keyDepth', 'capHeight'],
     });
   }
 
@@ -74,7 +92,7 @@ function validate(p: Params): Issue[] {
     issues.push({
       level: 'error',
       message: `A ${d.capH} mm cap keeps ${d.capTop.toFixed(2)} mm of top face for the dish and the legend, leaving ${(d.capH - d.capTop).toFixed(2)} mm of hollow - the ${d.sw.label} stem needs ${d.sw.stemDepth} mm. Make the cap taller, shallow the legend, or turn the dish off.`,
-      paramIds: ['capHeight', 'legendDepth', 'capDish'],
+      paramIds: ['capHeight', 'legendDepth', 'topCurve'],
     });
   }
   if (d.legendStyle !== 'none' && d.legendSize > d.capTopSize - 2) {
@@ -168,17 +186,18 @@ function validate(p: Params): Issue[] {
 
 function readouts(d: Derived): Record<string, string> {
   const out: Record<string, string> = {
-    Keys: `${d.keys} on a ${d.pitch} mm pitch`,
+    Keys: `${d.keys} on a ${Number(d.pitch.toFixed(2))} mm pitch`,
     Body: `${d.baseW.toFixed(1)} x ${d.baseD.toFixed(1)} x ${d.baseH.toFixed(1)} mm`,
     'With caps': `${(
-      d.baseH +
-      d.capH +
-      (d.legendStyle === 'raised' ? d.legendDepth : 0) -
-      (d.sw.hollow ? 0 : d.wellDepth)
+      Math.max(d.baseH, d.plateTop + d.capRest + d.capH + d.capDome) +
+      (d.legendStyle === 'raised' ? d.legendDepth : 0)
     ).toFixed(1)} mm tall`,
     'Keycap top': `${d.capTopSize.toFixed(1)} mm across`,
     Hardware: d.sw.hardware === 'none' ? 'none - fully printed' : `${d.keys} x ${d.sw.hardware.replace('one ', '').replace(' per key', '')}`,
   };
+  if (d.sw.hollow) {
+    out['Above the rim'] = `${(d.capRest + d.capH - d.rimH).toFixed(1)} mm, ${d.pressedProud.toFixed(1)} mm held down`;
+  }
   if (d.sw.stem === 'post') {
     out['Dome'] = `${(2 * d.domeR).toFixed(1)} mm across, ${(d.domeH / d.domeWall).toFixed(1)}x wall`;
     out['Travel'] = `${d.travel.toFixed(1)} mm`;
@@ -216,7 +235,9 @@ function build(p: Params, ctx: BuildCtx): BuildResult {
       mesh: serialize(buildBase(ctx, d)),
       color: String(p.bodyColor),
       orientationNote: d.sw.hollow
-        ? 'Print plate-side down, open side up. The key cutouts then need no bridging and the only overhang left is the cover rebate.'
+        ? d.rimH > 0.05
+          ? 'Print open side down, as laid out. The plate bridges the cavity once, a short span most printers manage without support, and the rim and its chamfer print cleanly on top.'
+          : 'Print plate-side down, open side up. The key cutouts then need no bridging and the only overhang left is the cover rebate.'
         : 'Print wells upward, as laid out. The wells and the dome seats are pockets, so nothing overhangs and nothing needs support.',
     },
   ];
@@ -255,7 +276,7 @@ function build(p: Params, ctx: BuildCtx): BuildResult {
     const seat: [number, number, number] = [
       keyX(d, i),
       0,
-      d.baseH - (d.sw.hollow ? 0 : d.wellDepth) - (d.capH - d.capTop - d.sw.stemDepth),
+      d.plateTop + d.capRest,
     ];
 
     parts.push({
@@ -306,7 +327,7 @@ function build(p: Params, ctx: BuildCtx): BuildResult {
       quantity: d.keys,
       // One dome stands in for all of them in the assembled view: it sits under
       // the first key, in its seat.
-      assembly: [keyX(d, 0), 0, d.baseH - d.wellDepth - d.domeH - 0.4],
+      assembly: [keyX(d, 0), 0, d.plateTop - d.wellDepth - d.domeH - 0.4],
       orientationNote:
         'Print apex up - a shallow cone supports itself. Slow it right down: this part is three layers thick and has to flex for the life of the toy.',
     });
@@ -336,6 +357,7 @@ export const keyClickerGenerator: Generator = {
     'One key per letter, up to twelve',
     'Cherry MX, Kailh Choc, or a fully printed snap dome',
     'Two-colour legends from a single filament change',
+    'Keys sunk in a tray, or each in its own rounded cell',
     'Keyring loop on the end or the side',
   ],
   art: `<svg viewBox="0 0 120 96" role="img" aria-hidden="true">
@@ -362,6 +384,22 @@ export const keyClickerGenerator: Generator = {
   validate,
   build,
   presets: [
+    {
+      label: 'Name in a tray',
+      values: {
+        text: 'EMILY', baseStyle: 'tray', legendFont: 'roboto-slab-bold', legendStyle: 'inlay',
+        legendSize: 9, capHeight: 8, keyDepth: 2.5, capCorner: 1.6,
+        bodyColor: '#e9a2b2', capColor: '#f5f2ea', legendColor: '#e27b97', coverColor: '#e9a2b2',
+      },
+    },
+    {
+      label: 'Stacked cells',
+      values: {
+        text: 'JOY', baseStyle: 'cells', legendFont: 'nunito-extrabold', legendStyle: 'inlay',
+        legendSize: 9, capCorner: 3.5, cellCorner: 5, keyDepth: 2,
+        bodyColor: '#ec7a1f', capColor: '#f3e4a8', legendColor: '#ec7a1f', coverColor: '#ec7a1f',
+      },
+    },
     {
       label: 'MX four-letter keychain',
       values: { text: 'KONG', switchType: 'mx', keyPitch: 19.05, keySize: 17.4 },

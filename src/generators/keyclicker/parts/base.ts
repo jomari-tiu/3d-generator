@@ -4,61 +4,126 @@ import { roundedRect, segmentsForRadius, taperedExtrude } from '../../../core/ke
 import { keyX, type Derived } from '../geometry';
 
 /**
- * The bar the keys live in: a plate on top with a cutout per key, walls, and an
- * open bottom that the cover closes.
+ * The body seen from above. A tray is one rounded bar; cells are a rounded
+ * square per key, overlapping by one wall so neighbours share it.
+ *
+ * Everything below the rim -- the cavity, the cover rebate, the cover itself --
+ * is this outline offset inward, so the two styles need no separate plumbing
+ * underneath.
+ */
+export function bodyFootprint(ctx: BuildCtx, d: Derived): CrossSection {
+  const { m } = ctx;
+  if (d.baseStyle !== 'cells') return roundedRect(m, d.baseW, d.baseD, d.baseCorner);
+  const cells: CrossSection[] = [];
+  for (let i = 0; i < d.keys; i++) {
+    cells.push(roundedRect(m, d.cell, d.cell, d.cellCorner).translate([keyX(d, i), 0]));
+  }
+  return m.CrossSection.union(cells);
+}
+
+/**
+ * A rounded box with its top edge chamfered: the full box short of the
+ * chamfer, and a tapered copy of the outline on top.
+ *
+ * A scaled taper is only an even inset for a convex outline, which is why the
+ * cells body is built from one of these per cell rather than from the merged
+ * outline. Unioned, the chamfers of neighbouring cells meet in a V, and that
+ * groove is what makes a row of cells read as separate blocks.
+ */
+function chamferedBox(
+  ctx: BuildCtx,
+  outline: CrossSection,
+  w: number,
+  h: number,
+  height: number,
+  chamfer: number,
+): Manifold {
+  const { m } = ctx;
+  if (chamfer <= 0.05) return m.Manifold.extrude(outline, height);
+  return m.Manifold.union([
+    m.Manifold.extrude(outline, height - chamfer),
+    taperedExtrude(m, outline, chamfer + 0.001, (w - 2 * chamfer) / w, (h - 2 * chamfer) / h).translate([
+      0,
+      0,
+      height - chamfer - 0.001,
+    ]),
+  ]);
+}
+
+/**
+ * The body the keys live in: a plate with a cutout per key, a rim standing
+ * above it that the keycaps sit down into, walls, and an open bottom that the
+ * cover closes.
  *
  * That is a keyboard case in miniature, and for the same reason: a switch clips
  * onto the plate from UNDERNEATH, so the bottom has to open or there is no way
- * to get the switches in. It also means the pins end up inside the bar instead
- * of against your leg.
+ * to get the switches in. It also means the pins end up inside the body
+ * instead of against your leg.
  *
- * Prints plate-side down. The cavity ceiling is then the bed-facing face, the
- * cutouts need no bridging, and the only overhang left is the cover's rebate,
- * which is a 45 degree step.
+ * Prints rim-side down. The cavity ceiling is then the bed-facing side of the
+ * plate, the cutouts need no bridging, and the only overhang left is the cover
+ * rebate, which is a 45 degree step.
  */
 export function buildBase(ctx: BuildCtx, d: Derived): Manifold {
   const { m } = ctx;
 
-  const outline = roundedRect(m, d.baseW, d.baseD, d.baseCorner);
-  let base: Manifold = m.Manifold.extrude(outline, d.baseH);
-
-  // Chamfer the top edge, which is the only face anyone looks at: lop off the
-  // top slab and put back a tapered copy of it.
-  if (d.chamfer > 0.05) {
-    base = base.subtract(
-      m.Manifold.extrude(outline, d.chamfer + 1).translate([0, 0, d.baseH - d.chamfer]),
-    );
-    base = base.add(
-      taperedExtrude(
-        m,
-        outline,
-        d.chamfer,
-        (d.baseW - 2 * d.chamfer) / d.baseW,
-        (d.baseD - 2 * d.chamfer) / d.baseD,
-      ).translate([0, 0, d.baseH - d.chamfer]),
+  let base: Manifold;
+  if (d.baseStyle === 'cells') {
+    const cells: Manifold[] = [];
+    for (let i = 0; i < d.keys; i++) {
+      cells.push(
+        chamferedBox(
+          ctx,
+          roundedRect(m, d.cell, d.cell, d.cellCorner),
+          d.cell,
+          d.cell,
+          d.baseH,
+          d.chamfer,
+        ).translate([keyX(d, i), 0, 0]),
+      );
+    }
+    base = m.Manifold.union(cells);
+  } else {
+    base = chamferedBox(
+      ctx,
+      roundedRect(m, d.baseW, d.baseD, d.baseCorner),
+      d.baseW,
+      d.baseD,
+      d.baseH,
+      d.chamfer,
     );
   }
 
+  const footprint = bodyFootprint(ctx, d);
+
   // --- cavity and cover rebate, for a switch body that has to go in from below
   if (d.sw.hollow) {
-    const cavity = roundedRect(
-      m,
-      d.baseW - 2 * d.wallT,
-      d.baseD - 2 * d.wallT,
-      Math.max(0, d.baseCorner - d.wallT),
+    base = base.subtract(
+      m.Manifold.extrude(footprint.offset(-d.wallT, 'Round'), d.cavityD + 1).translate([0, 0, -1]),
     );
     base = base.subtract(
-      m.Manifold.extrude(cavity, d.cavityD + 1).translate([0, 0, -1]),
+      m.Manifold.extrude(
+        footprint.offset(-(d.wallT - d.coverBead), 'Round'),
+        d.coverT + d.clear,
+      ).translate([0, 0, -0.001]),
     );
+  }
 
-    const rebate = roundedRect(
-      m,
-      d.baseW - 2 * (d.wallT - d.coverBead),
-      d.baseD - 2 * (d.wallT - d.coverBead),
-      Math.max(0, d.baseCorner - d.wallT + d.coverBead),
-    );
+  // --- the pocket the keycaps sit down into
+  if (d.rimH > 0.05) {
+    const r = d.capCorner + d.keyGap;
+    let pocket: CrossSection;
+    if (d.baseStyle === 'cells') {
+      const ps: CrossSection[] = [];
+      for (let i = 0; i < d.keys; i++) {
+        ps.push(roundedRect(m, d.pocket, d.pocket, r).translate([keyX(d, i), 0]));
+      }
+      pocket = m.CrossSection.union(ps);
+    } else {
+      pocket = roundedRect(m, (d.keys - 1) * d.pitch + d.pocket, d.pocket, r);
+    }
     base = base.subtract(
-      m.Manifold.extrude(rebate, d.coverT + d.clear).translate([0, 0, -0.001]),
+      m.Manifold.extrude(pocket, d.rimH + 1).translate([0, 0, d.plateTop]),
     );
   }
 
@@ -90,7 +155,7 @@ export function buildBase(ctx: BuildCtx, d: Derived): Manifold {
  */
 function keyOpening(ctx: BuildCtx, d: Derived): Manifold {
   const { m } = ctx;
-  const top = d.baseH;
+  const top = d.plateTop;
 
   if (d.sw.cutout > 0) {
     const cut = d.sw.cutout + d.clear;
@@ -130,7 +195,7 @@ function keyOpening(ctx: BuildCtx, d: Derived): Manifold {
 function buildPost(ctx: BuildCtx, d: Derived): Manifold {
   const { m } = ctx;
   const segs = segmentsForRadius(d.postR, 0.08);
-  const floor = d.baseH - d.wellDepth - d.domeH - 0.4;
+  const floor = d.plateTop - d.wellDepth - d.domeH - 0.4;
 
   // Reach DOWN into the floor as well as up out of it. A post that merely
   // stands on the seat meets it on one plane, and a plane of contact is not a
@@ -185,22 +250,37 @@ function addLoop(ctx: BuildCtx, d: Derived, base: Manifold): Manifold {
  */
 export function buildCover(ctx: BuildCtx, d: Derived): Manifold {
   const { m } = ctx;
-  const w = d.baseW - 2 * (d.wallT - d.coverBead) - 2 * d.clear;
-  const h = d.baseD - 2 * (d.wallT - d.coverBead) - 2 * d.clear;
-  const corner = Math.max(0, d.baseCorner - d.wallT + d.coverBead);
+  const inset = d.wallT - d.coverBead + d.clear;
+  const outline = bodyFootprint(ctx, d).offset(-inset, 'Round');
+  const w = d.baseW - 2 * inset;
+  const h = d.baseD - 2 * inset;
 
-  let cover: Manifold = m.Manifold.extrude(roundedRect(m, w, h, corner), d.coverT);
+  let cover: Manifold = m.Manifold.extrude(outline, d.coverT);
 
-  // Bead, tapered on the way in so it can be pressed home with a thumb.
-  const bead = taperedExtrude(
-    m,
-    roundedRect(m, w, h, corner),
-    d.coverBead,
-    (w - 2 * d.coverBead) / w,
-    (h - 2 * d.coverBead) / h,
-  ).translate([0, 0, d.coverT - 0.001]);
-
-  cover = cover.add(bead);
+  // Bead, tapered on the way in so it can be pressed home with a thumb. The
+  // tray's outline is convex, so a scaled copy is an exact taper. The cells'
+  // outline pinches in between keys, where scaling would not be an even inset,
+  // so their bead is a short stack of inset slices instead -- a layer or so
+  // each, which is all a printer would make of a smooth taper anyway.
+  let bead: Manifold;
+  if (d.baseStyle !== 'cells') {
+    bead = taperedExtrude(m, outline, d.coverBead, (w - 2 * d.coverBead) / w, (h - 2 * d.coverBead) / h);
+  } else {
+    const n = Math.max(2, Math.ceil(d.coverBead / d.layer));
+    const step = d.coverBead / n;
+    const slices: Manifold[] = [];
+    for (let k = 0; k < n; k++) {
+      slices.push(
+        m.Manifold.extrude(outline.offset(-(k + 1) * step, 'Round'), step + 0.001).translate([
+          0,
+          0,
+          k * step,
+        ]),
+      );
+    }
+    bead = m.Manifold.union(slices);
+  }
+  cover = cover.add(bead.translate([0, 0, d.coverT - 0.001]));
 
   const notch = m.Manifold.cube([3, h + 2, d.coverT * 0.5], true);
   cover = cover.subtract(notch.translate([-w / 2, 0, d.coverT * 0.25]));

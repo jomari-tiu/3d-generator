@@ -11,6 +11,8 @@ export const keyClickerGroups: readonly ParamGroup[] = [
   { id: 'printer', label: 'Printer', tab: 'Output', collapsed: true },
 ];
 
+const isTray = (v: Record<string, unknown>) => v.baseStyle !== 'cells';
+const isCells = (v: Record<string, unknown>) => v.baseStyle === 'cells';
 const isPrinted = (v: Record<string, unknown>) => v.switchType === 'printed';
 
 export const keyClickerParams: readonly ParamSpec[] = [
@@ -102,6 +104,7 @@ export const keyClickerParams: readonly ParamSpec[] = [
     max: 24,
     step: 0.05,
     default: 19.05,
+    visibleIf: isTray,
     help: 'Centre to centre. 19.05 is standard keyboard spacing.',
   }),
   num('keySize', 'Keycap size', {
@@ -136,9 +139,54 @@ export const keyClickerParams: readonly ParamSpec[] = [
     step: 0.1,
     default: 1.6,
   }),
-  bool('capDish', 'Dished top', { group: 'cap', default: true }),
+  num('topCurve', 'Top surface', {
+    group: 'cap',
+    unit: 'mm',
+    min: -3,
+    max: 3,
+    step: 0.1,
+    default: -0.8,
+    help: 'Below zero scoops the top down for a fingertip (dished), zero is flat, above zero rounds it up like a button (domed). The number is how far the middle sits from the edges. Raised letters follow the curve.',
+  }),
 
   // ------------------------------------------------------------------- body
+  choice('baseStyle', 'Base', {
+    group: 'body',
+    default: 'tray',
+    options: [
+      { value: 'tray', label: 'Tray - keys sunk in one long pocket' },
+      { value: 'cells', label: 'Cells - a rounded housing per key' },
+    ],
+    help: 'Both print as one body. Cells space the keys by their housings, so the key pitch is set for you.',
+  }),
+  num('keyDepth', 'Keys sunk by', {
+    group: 'body',
+    unit: 'mm',
+    min: 0,
+    max: 8,
+    step: 0.5,
+    default: 2,
+    help: 'How much of each keycap the rim hides at rest. Too deep and a pressed key disappears below the rim.',
+  }),
+  num('keyGap', 'Gap around keys', {
+    group: 'body',
+    unit: 'mm',
+    min: 0.3,
+    max: 2,
+    step: 0.1,
+    default: 0.8,
+    help: 'Between each keycap and the pocket wall. Under half a millimetre and a cap that prints slightly wide will rub.',
+  }),
+  num('cellCorner', 'Cell corner radius', {
+    group: 'body',
+    unit: 'mm',
+    min: 0,
+    max: 10,
+    step: 0.5,
+    default: 4,
+    visibleIf: isCells,
+    help: 'Rounder corners pinch in deeper between the cells.',
+  }),
   num('wall', 'Wall thickness', {
     group: 'body',
     unit: 'mm',
@@ -154,6 +202,7 @@ export const keyClickerParams: readonly ParamSpec[] = [
     max: 12,
     step: 0.5,
     default: 3,
+    visibleIf: isTray,
   }),
   num('baseCorner', 'Body corner radius', {
     group: 'body',
@@ -162,6 +211,7 @@ export const keyClickerParams: readonly ParamSpec[] = [
     max: 10,
     step: 0.5,
     default: 3,
+    visibleIf: isTray,
   }),
   bool('keyring', 'Keyring loop', { group: 'body', default: true }),
   num('loopDiameter', 'Loop hole', {

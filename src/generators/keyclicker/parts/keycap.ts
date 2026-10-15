@@ -98,20 +98,43 @@ export function buildKeycap(
   // capTopSize / 2 -- the circle inscribed in a square top -- scoops only that
   // inscribed circle and leaves the four corners standing at full height, which
   // reads as a hard circular rim stamped into the keycap.
-  if (d.dish > 0.05) {
-    // Outermost point of the top footprint: the tapered extrude scales the
-    // whole rounded square, corner radius included.
-    const cornerTop = Math.min(
-      (d.capCorner * d.capTopSize) / d.keySize,
-      d.capTopSize / 2,
-    );
-    const reach = Math.SQRT2 * (d.capTopSize / 2 - cornerTop) + cornerTop;
+  //
+  // Outermost point of the top footprint: the tapered extrude scales the whole
+  // rounded square, corner radius included.
+  const cornerTop = Math.min((d.capCorner * d.capTopSize) / d.keySize, d.capTopSize / 2);
+  const reach = Math.SQRT2 * (d.capTopSize / 2 - cornerTop) + cornerTop;
+  // Sphere through (reach, capH) with its low point `dish` below capH.
+  const dishR = d.dish > 0.05 ? (reach * reach + d.dish * d.dish) / (2 * d.dish) : 0;
+  const dishZ = d.capH + dishR - d.dish;
+  if (dishR > 0) {
+    cap = cap.subtract(m.Manifold.sphere(dishR, 128).translate([0, 0, dishZ]));
+  }
 
-    // Sphere through (reach, capH) with its low point `dish` below capH.
-    const r = (reach * reach + d.dish * d.dish) / (2 * d.dish);
-    cap = cap.subtract(
-      m.Manifold.sphere(r, 128).translate([0, 0, d.capH + r - d.dish]),
-    );
+  // Domed top: a spherical cap, its high point `capDome` above the edges, that
+  // meets the top plane at the middle of each EDGE -- then hulled with the top
+  // face so it runs out into the corners too.
+  //
+  // Neither plain sphere works on a square face. One sized to the corners, as
+  // the dish is, still stands well above the plane at the middle of each edge,
+  // and the footprint clips it into a vertical step there: a lid sitting on the
+  // key. One sized to the edges falls below the plane before the corners, and
+  // leaves them flat with a circular seam around them.
+  const half = d.capTopSize / 2;
+  const domeR = d.capDome > 0.05 ? (half * half + d.capDome * d.capDome) / (2 * d.capDome) : 0;
+  const domeZ = d.capH + d.capDome - domeR;
+  if (domeR > 0) {
+    const crown = m.Manifold.sphere(domeR, 128)
+      .translate([0, 0, domeZ])
+      .intersect(
+        m.Manifold.cube([d.capTopSize + 2, d.capTopSize + 2, d.capDome + 1]).translate([
+          -half - 1,
+          -half - 1,
+          d.capH,
+        ]),
+      );
+    const face = m.Manifold.extrude(roundedRect(m, d.capTopSize, d.capTopSize, cornerTop), 0.01)
+      .translate([0, 0, d.capH - 0.01]);
+    cap = cap.add(m.Manifold.hull([crown, face]));
   }
 
   if (!legend || d.legendStyle === 'none') return { cap, insert: null };
@@ -130,11 +153,24 @@ export function buildKeycap(
     );
     if (!(clipped.area() > 0)) return { cap, insert: null };
 
-    const proud = clipped
-      .extrude(d.capTop + d.legendDepth)
-      .translate([0, 0, d.capH - d.capTop])
-      .subtract(cap);
-    return { cap, insert: proud };
+    let prism = clipped
+      .extrude(d.capTop + d.capDome + d.legendDepth)
+      .translate([0, 0, d.capH - d.capTop]);
+    // On a dome a flat-topped letter would be buried at the crown and float at
+    // its edges, so its top is the dome itself, raised by the legend depth.
+    if (domeR > 0) {
+      prism = prism.intersect(
+        m.Manifold.sphere(domeR + d.legendDepth, 128).translate([0, 0, domeZ]),
+      );
+    }
+    // In a dish a flat-topped letter stands tall in the hollow and barely
+    // clears the rim, so its top is the dish lifted by the legend depth.
+    if (dishR > 0) {
+      prism = prism.subtract(
+        m.Manifold.sphere(dishR - d.legendDepth, 128).translate([0, 0, dishZ]),
+      );
+    }
+    return { cap, insert: prism.subtract(cap) };
   }
 
   // Cut in. The inlay is the INTERSECTION of the cutter with the cap, not the
@@ -142,9 +178,17 @@ export function buildKeycap(
   // exactly the material the recess removed, so it can be neither proud of a
   // dished top nor short of the recess floor, whatever shape that floor turned
   // out to be.
-  const cutter = legend
-    .extrude(d.legendDepth + 1)
-    .translate([0, 0, d.capH - d.legendDepth - d.dish]);
+  //
+  // On a dome a flat-bottomed cutter would be full depth at the crown and
+  // nearly nothing at the letter's edges -- too thin there for the second
+  // colour to cover -- so the floor follows the dome, the legend depth under it.
+  const cutter =
+    domeR > 0
+      ? legend
+          .extrude(d.capTop + d.capDome + 1)
+          .translate([0, 0, d.capH - d.capTop])
+          .subtract(m.Manifold.sphere(domeR - d.legendDepth, 128).translate([0, 0, domeZ]))
+      : legend.extrude(d.legendDepth + 1).translate([0, 0, d.capH - d.legendDepth - d.dish]);
 
   return {
     cap: cap.subtract(cutter),

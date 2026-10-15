@@ -74,9 +74,11 @@ describe('key clicker', () => {
       expect(cap.orientation).toEqual([0, 0, 0]);
       expect(legend.orientation).toEqual(cap.orientation);
 
-      // The letter stands legendDepth above the cap's top face...
+      // The letter stands legendDepth above the dished face it sits on: never
+      // higher than that above the rim, never lower than that above the floor...
       expect(cap.mesh.bbox.max[2]).toBeCloseTo(d.capH, 3);
-      expect(legend.mesh.bbox.max[2]).toBeCloseTo(d.capH + d.legendDepth, 3);
+      expect(legend.mesh.bbox.max[2]).toBeLessThanOrEqual(d.capH + d.legendDepth + 1e-3);
+      expect(legend.mesh.bbox.max[2]).toBeGreaterThan(d.capH - d.dish + d.legendDepth - 1e-3);
       // ...and follows the dish down into it rather than floating over it.
       expect(legend.mesh.bbox.min[2]).toBeLessThan(d.capH);
       expect(legend.mesh.bbox.min[2]).toBeGreaterThan(d.capH - d.capTop);
@@ -109,7 +111,7 @@ describe('key clicker', () => {
         ['choc', { keyPitch: 18, keySize: 16.4, capHeight: 5.5 }],
         ['printed', { keyPitch: 16, keySize: 14.4, capHeight: 6, legendSize: 5 }],
       ] as [string, Params][]) {
-        const p = paramsWith({ text: 'A', switchType: type, capDish: true, ...patch });
+        const p = paramsWith({ text: 'A', switchType: type, topCurve: -0.8, ...patch });
         const d = derive(p);
         const result = keyClickerGenerator.build(p, ctxFor(m));
         const cap = result.parts.find((x) => x.id === 'cap-0')!;
@@ -167,7 +169,7 @@ describe('key clicker', () => {
         ['choc', { keyPitch: 18, keySize: 16.4, capHeight: 5.5 }],
         ['printed', { keyPitch: 16, keySize: 14.4, capHeight: 6, legendSize: 5 }],
       ] as [string, Params][]) {
-        const p = paramsWith({ text: 'A', switchType: type, capDish: true, ...patch });
+        const p = paramsWith({ text: 'A', switchType: type, topCurve: -0.8, ...patch });
         const d = derive(p);
         const result = keyClickerGenerator.build(p, ctxFor(m));
         const cap = result.parts.find((x) => x.id === 'cap-0')!;
@@ -384,6 +386,8 @@ describe('key clicker', () => {
       // watertight and prints as loose debris.
       for (const [type, patch] of [
         ['mx', { loopPosition: 'end' }],
+        ['mx', { baseStyle: 'cells', loopPosition: 'side' }],
+        ['mx', { baseStyle: 'cells', text: 'ABCD', cellCorner: 8 }],
         ['choc', { keyPitch: 18, keySize: 16.4, capHeight: 5.5, loopPosition: 'side' }],
         ['printed', { keyPitch: 16, keySize: 14.4, capHeight: 6, legendSize: 5 }],
       ] as [string, Params][]) {
@@ -417,6 +421,114 @@ describe('key clicker', () => {
           `preset "${preset.label}"`,
         ).toEqual([]);
         expect(result.parts.length, `preset "${preset.label}"`).toBeGreaterThan(0);
+      }
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+describe('key clicker bases', () => {
+  it('sinks the keys into the rim, and keeps a held-down key above it', () => {
+    for (const baseStyle of ['tray', 'cells']) {
+      const d = derive(paramsWith({ text: 'AB', baseStyle }));
+      expect(d.rimH, baseStyle).toBeGreaterThan(0);
+      // The rim hides `keyDepth` of the cap at rest...
+      expect(d.plateTop + d.rimH - (d.plateTop + d.capRest)).toBeCloseTo(2, 6);
+      // ...and still leaves some of it above the rim with the key held down.
+      expect(d.pressedProud, baseStyle).toBeGreaterThanOrEqual(1);
+    }
+    expect(errorsOf({ keyDepth: 6 }).join(' ')).toMatch(/below the rim/);
+  });
+
+  it('spaces cells by pocket plus one shared wall, whatever the pitch slider says', () => {
+    const d = derive(paramsWith({ text: 'ABC', baseStyle: 'cells', keyPitch: 24 }));
+    expect(d.pitch).toBeCloseTo(d.keySize + 2 * d.keyGap + d.wallT, 6);
+    expect(d.baseW).toBeCloseTo(2 * d.pitch + d.cell, 6);
+  });
+
+  it('builds a cells body with a pocket per key and a one-piece cover', async () => {
+    const m = await kernel();
+    try {
+      const p = paramsWith({ text: 'ABC', baseStyle: 'cells', keyring: false });
+      const d = derive(p);
+      const result = keyClickerGenerator.build(p, ctxFor(m));
+      expect(result.issues.filter((i) => i.level === 'error')).toEqual([]);
+
+      const body = result.parts.find((x) => x.id === 'base')!;
+      expect(body.mesh.bbox.max[0] - body.mesh.bbox.min[0]).toBeCloseTo(d.baseW, 1);
+      expect(body.mesh.bbox.max[2]).toBeCloseTo(d.baseH, 3);
+
+      const solid = m.Manifold.ofMesh({
+        numProp: body.mesh.numProp,
+        vertProperties: body.mesh.position,
+        triVerts: body.mesh.index,
+      });
+      // Just above the plate: open over each key, solid over the shared wall.
+      const z = d.plateTop + d.rimH / 2;
+      const probe = (x: number) =>
+        solid.intersect(m.Manifold.cube([0.4, 0.4, 0.4], true).translate([x, 0, z])).volume();
+      for (let i = 0; i < 3; i++) expect(probe(keyX(d, i)), `pocket ${i}`).toBeLessThan(1e-6);
+      expect(probe((keyX(d, 0) + keyX(d, 1)) / 2), 'wall').toBeGreaterThan(0.06);
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+describe('key clicker top surface', () => {
+  const solidOf = (m: ManifoldToplevel, mesh: { numProp: number; position: Float32Array; index: Uint32Array }) =>
+    m.Manifold.ofMesh({ numProp: mesh.numProp, vertProperties: mesh.position, triVerts: mesh.index });
+
+  it('domes the top up by the depth asked for, falling away to the edges', async () => {
+    const m = await kernel();
+    try {
+      const p = paramsWith({ text: 'A', topCurve: 1.2, legendStyle: 'none' });
+      const d = derive(p);
+      expect(d.capDome).toBe(1.2);
+      expect(d.dish).toBe(0);
+      const cap = keyClickerGenerator.build(p, ctxFor(m)).parts.find((x) => x.id === 'cap-0')!;
+      const solid = solidOf(m, cap.mesh);
+      const surfaceAt = (x: number) =>
+        m.Manifold.cube([0.2, 0.2, d.capH * 3], true).translate([x, 0, 0]).intersect(solid)
+          .boundingBox().max[2];
+
+      expect(surfaceAt(0)).toBeCloseTo(d.capH + 1.2, 1);
+      let last = Infinity;
+      for (const f of [0, 0.3, 0.6, 0.9]) {
+        const z = surfaceAt((f * d.capTopSize) / 2);
+        expect(z).toBeLessThanOrEqual(last + 1e-3);
+        last = z;
+      }
+      expect(last).toBeLessThan(d.capH + 0.6);
+      expect(m.Manifold.ofMesh({
+        numProp: cap.mesh.numProp, vertProperties: cap.mesh.position, triVerts: cap.mesh.index,
+      }).decompose().length).toBe(1);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('lays raised letters and inlays along the dome, not flat across it', async () => {
+    const m = await kernel();
+    try {
+      for (const legendStyle of ['raised', 'inlay']) {
+        const p = paramsWith({ text: 'H', topCurve: 1.5, legendStyle, legendSize: 9 });
+        const d = derive(p);
+        const result = keyClickerGenerator.build(p, ctxFor(m));
+        expect(result.issues.filter((i) => i.level === 'error')).toEqual([]);
+        const insert = solidOf(m, result.parts.find((x) => x.id === 'legend-0')!.mesh);
+        // Thickness of the letter in a thin column at x: the same everywhere
+        // when it follows the dome, thin at the edges when it does not.
+        const thickness = (x: number) => {
+          const bb = m.Manifold.cube([0.15, 30, 30], true).translate([x, 0, d.capH]).intersect(insert)
+            .boundingBox();
+          return bb.max[2] - bb.min[2];
+        };
+        // The uprights of an H stand at the sides of the letter.
+        const xs = [-3, 3];
+        const ts = xs.map(thickness);
+        for (const t of ts) expect(t, legendStyle).toBeGreaterThan(d.legendDepth - 0.15);
       }
     } finally {
       cleanup();
