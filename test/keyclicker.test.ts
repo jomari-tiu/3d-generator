@@ -28,7 +28,7 @@ describe('key clicker', () => {
     expect(legendChars(paramsWith({ text: '' }))).toEqual([]);
   });
 
-  it('builds a body, a cover and a cap-plus-legend per key', async () => {
+  it('builds a closed body and a cap-plus-legend per key', async () => {
     const m = await kernel();
     try {
       const result = keyClickerGenerator.build(paramsWith({ text: 'KONG' }), ctxFor(m));
@@ -36,7 +36,7 @@ describe('key clicker', () => {
 
       const ids = result.parts.map((p) => p.id);
       expect(ids).toEqual([
-        'base', 'cover',
+        'base',
         'cap-0', 'legend-0', 'cap-1', 'legend-1',
         'cap-2', 'legend-2', 'cap-3', 'legend-3',
       ]);
@@ -201,7 +201,7 @@ describe('key clicker', () => {
           paramsWith({ text: 'AB', legendStyle: style }),
           ctxFor(m),
         );
-        expect(result.parts.map((p) => p.id), style).toEqual(['base', 'cover', 'cap-0', 'cap-1']);
+        expect(result.parts.map((p) => p.id), style).toEqual(['base', 'cap-0', 'cap-1']);
       }
     } finally {
       cleanup();
@@ -260,27 +260,48 @@ describe('key clicker', () => {
     }
   });
 
-  it('ships a cover only for a body that has switches to retain', async () => {
+  it('closes the bottom of the body, with no cover to print', async () => {
     const m = await kernel();
     try {
-      for (const type of ['mx', 'choc']) {
-        const patch = type === 'choc' ? { keyPitch: 18, keySize: 16.4, capHeight: 5.5 } : {};
-        const r = keyClickerGenerator.build(
-          paramsWith({ text: 'A', switchType: type, ...patch }),
-          ctxFor(m),
+      for (const [type, patch] of [
+        ['mx', {}],
+        ['mx', { baseStyle: 'cells', text: 'AB' }],
+        ['choc', { keyPitch: 18, keySize: 16.4, capHeight: 5.5 }],
+      ] as [string, Params][]) {
+        const p = paramsWith({ text: 'A', switchType: type, keyring: false, ...patch });
+        const d = derive(p);
+        const r = keyClickerGenerator.build(p, ctxFor(m));
+        expect(r.parts.map((x) => x.id), type).not.toContain('cover');
+
+        // Switches go in from the top, so the floor is solid under every key:
+        // a slab through the floor keeps its full footprint.
+        const body = r.parts.find((x) => x.id === 'base')!;
+        const solid = m.Manifold.ofMesh({
+          numProp: body.mesh.numProp,
+          vertProperties: body.mesh.position,
+          triVerts: body.mesh.index,
+        });
+        expect(body.mesh.bbox.min[2]).toBeCloseTo(0, 3);
+        for (let i = 0; i < d.keys; i++) {
+          const under = solid.intersect(
+            m.Manifold.cube([4, 4, d.floorT * 0.8], true).translate([keyX(d, i), 0, d.floorT / 2]),
+          );
+          expect(under.volume(), `${type} floor under key ${i}`).toBeCloseTo(16 * d.floorT * 0.8, 3);
+        }
+        // ...and there is still room above it for the switch housing.
+        const cavity = solid.intersect(
+          m.Manifold.cube([4, 4, 1], true).translate([keyX(d, 0), 0, d.floorT + d.cavityD / 2]),
         );
-        expect(r.parts.map((x) => x.id), type).toContain('cover');
+        expect(cavity.volume(), `${type} cavity`).toBeLessThan(1e-6);
       }
 
-      // The printed variant has nothing to insert from below, and it needs
-      // solid floor under each well for the guide post to be anchored in. A
-      // cover would be a part to lose, and a cavity would leave the post
-      // floating - which serialises as a loose pin, not a post.
+      // The printed variant needs solid floor under each well for the guide
+      // post to be anchored in. A cavity would leave the post floating - which
+      // serialises as a loose pin, not a post.
       const printed = keyClickerGenerator.build(
         paramsWith({ text: 'A', switchType: 'printed', keyPitch: 16, keySize: 14.4, capHeight: 6 }),
         ctxFor(m),
       );
-      expect(printed.parts.map((x) => x.id)).not.toContain('cover');
 
       const body = printed.parts.find((x) => x.id === 'base')!;
       const solid = m.Manifold.ofMesh({
@@ -381,7 +402,7 @@ describe('key clicker', () => {
   it('leaves no part in more than one piece', async () => {
     const m = await kernel();
     try {
-      // Stems, posts, keyring lugs, chamfers and cover beads are all unioned
+      // Stems, posts, keyring lugs, chamfers are all unioned
       // on. Each one is a chance to land exactly on a face, which reads as
       // watertight and prints as loose debris.
       for (const [type, patch] of [
@@ -447,7 +468,7 @@ describe('key clicker bases', () => {
     expect(d.baseW).toBeCloseTo(2 * d.pitch + d.cell, 6);
   });
 
-  it('builds a cells body with a pocket per key and a one-piece cover', async () => {
+  it('builds a cells body with a pocket per key', async () => {
     const m = await kernel();
     try {
       const p = paramsWith({ text: 'ABC', baseStyle: 'cells', keyring: false });

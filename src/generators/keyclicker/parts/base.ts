@@ -7,9 +7,8 @@ import { keyX, type Derived } from '../geometry';
  * The body seen from above. A tray is one rounded bar; cells are a rounded
  * square per key, overlapping by one wall so neighbours share it.
  *
- * Everything below the rim -- the cavity, the cover rebate, the cover itself --
- * is this outline offset inward, so the two styles need no separate plumbing
- * underneath.
+ * The cavity under the plate is this outline offset inward, so the two styles
+ * need no separate plumbing underneath.
  */
 export function bodyFootprint(ctx: BuildCtx, d: Derived): CrossSection {
   const { m } = ctx;
@@ -52,17 +51,15 @@ function chamferedBox(
 
 /**
  * The body the keys live in: a plate with a cutout per key, a rim standing
- * above it that the keycaps sit down into, walls, and an open bottom that the
- * cover closes.
+ * above it that the keycaps sit down into, walls, and a closed floor.
  *
- * That is a keyboard case in miniature, and for the same reason: a switch clips
- * onto the plate from UNDERNEATH, so the bottom has to open or there is no way
- * to get the switches in. It also means the pins end up inside the body
- * instead of against your leg.
+ * A switch pushes down through its cutout from ABOVE until its clips snap
+ * under the plate, so nothing has to go in from below and the bottom stays
+ * shut: one solid part, no cover to lose, and the pins end up sealed inside
+ * the body instead of against your leg. The cavity under the plate is only
+ * the room the switch housing and its pins need.
  *
- * Prints rim-side down. The cavity ceiling is then the bed-facing side of the
- * plate, the cutouts need no bridging, and the only overhang left is the cover
- * rebate, which is a 45 degree step.
+ * Prints floor-down, as laid out. The plate bridges the cavity once.
  */
 export function buildBase(ctx: BuildCtx, d: Derived): Manifold {
   const { m } = ctx;
@@ -96,16 +93,10 @@ export function buildBase(ctx: BuildCtx, d: Derived): Manifold {
 
   const footprint = bodyFootprint(ctx, d);
 
-  // --- cavity and cover rebate, for a switch body that has to go in from below
+  // --- room under the plate for the switch housings, sealed by the floor
   if (d.sw.hollow) {
     base = base.subtract(
-      m.Manifold.extrude(footprint.offset(-d.wallT, 'Round'), d.cavityD + 1).translate([0, 0, -1]),
-    );
-    base = base.subtract(
-      m.Manifold.extrude(
-        footprint.offset(-(d.wallT - d.coverBead), 'Round'),
-        d.coverT + d.clear,
-      ).translate([0, 0, -0.001]),
+      m.Manifold.extrude(footprint.offset(-d.wallT, 'Round'), d.cavityD).translate([0, 0, d.floorT]),
     );
   }
 
@@ -159,7 +150,7 @@ function keyOpening(ctx: BuildCtx, d: Derived): Manifold {
 
   if (d.sw.cutout > 0) {
     const cut = d.sw.cutout + d.clear;
-    // Through the plate only: the cavity below is already open.
+    // Through the plate only, into the cavity below.
     return m.Manifold.extrude(roundedRect(m, cut, cut, 0.4), d.plateT + 2).translate([
       0,
       0,
@@ -221,69 +212,29 @@ function addLoop(ctx: BuildCtx, d: Derived, base: Manifold): Manifold {
   const thickness = Math.min(d.baseH * 0.6, lugR * 1.6);
   const z = d.baseH / 2;
 
+  // The tab is the hull of the ring and a strip buried in the body, so its
+  // sides run straight from the wall to the ring. A rounded web joined to a
+  // circle instead pinches in where the two meet, and that waist reads as a
+  // dent halfway along the tab.
+  // Only half a wall deep, so the strip never reaches into the switch cavity.
+  const sink = d.wallT / 2;
   let centre: [number, number];
-  let web: CrossSection;
+  let root: CrossSection;
   if (d.loopSide === 'side') {
     const cy = d.baseD / 2 + lugR - 1.4;
     centre = [0, cy];
-    web = roundedRect(m, lugR * 2, lugR * 1.6, lugR * 0.5).translate([0, cy - lugR * 0.7]);
+    root = m.CrossSection.square([lugR * 2, sink], true).translate([0, d.baseD / 2 - sink / 2]);
   } else {
     const cx = d.baseW / 2 + lugR - 1.4;
     centre = [cx, 0];
-    web = roundedRect(m, lugR * 1.6, lugR * 2, lugR * 0.5).translate([cx - lugR * 0.7, 0]);
+    root = m.CrossSection.square([sink, lugR * 2], true).translate([d.baseW / 2 - sink / 2, 0]);
   }
 
-  const lug = m.Manifold.extrude(
-    m.CrossSection.circle(lugR, 48).translate(centre),
-    thickness,
-  ).translate([0, 0, z - thickness / 2]);
-  const webSolid = m.Manifold.extrude(web, thickness).translate([0, 0, z - thickness / 2]);
+  const tab = m.CrossSection.hull([m.CrossSection.circle(lugR, 48).translate(centre), root]);
+  const lug = m.Manifold.extrude(tab, thickness).translate([0, 0, z - thickness / 2]);
   const hole = m.Manifold.cylinder(thickness + 4, d.loopD / 2, d.loopD / 2, 32)
     .translate([centre[0], centre[1], z - thickness / 2 - 2]);
 
-  return base.add(lug).add(webSolid).subtract(hole);
+  return base.add(lug).subtract(hole);
 }
 
-/**
- * The bottom cover. Drops into the rebate and is held by the bead; the notch
- * at each end gives a fingernail somewhere to go when a switch needs changing.
- */
-export function buildCover(ctx: BuildCtx, d: Derived): Manifold {
-  const { m } = ctx;
-  const inset = d.wallT - d.coverBead + d.clear;
-  const outline = bodyFootprint(ctx, d).offset(-inset, 'Round');
-  const w = d.baseW - 2 * inset;
-  const h = d.baseD - 2 * inset;
-
-  let cover: Manifold = m.Manifold.extrude(outline, d.coverT);
-
-  // Bead, tapered on the way in so it can be pressed home with a thumb. The
-  // tray's outline is convex, so a scaled copy is an exact taper. The cells'
-  // outline pinches in between keys, where scaling would not be an even inset,
-  // so their bead is a short stack of inset slices instead -- a layer or so
-  // each, which is all a printer would make of a smooth taper anyway.
-  let bead: Manifold;
-  if (d.baseStyle !== 'cells') {
-    bead = taperedExtrude(m, outline, d.coverBead, (w - 2 * d.coverBead) / w, (h - 2 * d.coverBead) / h);
-  } else {
-    const n = Math.max(2, Math.ceil(d.coverBead / d.layer));
-    const step = d.coverBead / n;
-    const slices: Manifold[] = [];
-    for (let k = 0; k < n; k++) {
-      slices.push(
-        m.Manifold.extrude(outline.offset(-(k + 1) * step, 'Round'), step + 0.001).translate([
-          0,
-          0,
-          k * step,
-        ]),
-      );
-    }
-    bead = m.Manifold.union(slices);
-  }
-  cover = cover.add(bead.translate([0, 0, d.coverT - 0.001]));
-
-  const notch = m.Manifold.cube([3, h + 2, d.coverT * 0.5], true);
-  cover = cover.subtract(notch.translate([-w / 2, 0, d.coverT * 0.25]));
-  cover = cover.subtract(notch.translate([w / 2, 0, d.coverT * 0.25]));
-  return cover;
-}

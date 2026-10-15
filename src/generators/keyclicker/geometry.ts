@@ -34,9 +34,11 @@ export interface SwitchSpec {
   /** Full key travel. */
   readonly keyTravel: number;
   /**
-   * Does the body need an open bottom and a cover?
+   * Does the body need a cavity under the plate?
    *
-   * A bought switch clips onto the plate from underneath, so it does. The
+   * A bought switch pushes down through the plate from above until its clips
+   * snap under it, so it needs room below the plate for its housing and pins --
+   * but not an open bottom: the cavity is closed by the body's own floor. The
    * printed variant has nothing to insert -- the well and the dome ARE the
    * mechanism -- and it needs SOLID material under each well for the guide post
    * to stand on. Hollowing it out leaves the post floating in the cavity.
@@ -146,9 +148,8 @@ export interface Derived {
   readonly baseCorner: number;
   readonly chamfer: number;
 
-  // --- bottom cover
-  readonly coverT: number;
-  readonly coverBead: number;
+  // --- bottom
+  /** Solid floor under the cavity or the wells. The body has no open bottom. */
   readonly floorT: number;
   readonly wellDepth: number;
 
@@ -224,12 +225,11 @@ export function derive(p: Params): Derived {
   // How deep the keycap skirt drops into its well, printed variant only.
   const wellDepth = travel + capH * 0.45;
 
-  // A hollow body is a plate over a cavity, closed by a cover. A solid one is
+  // A hollow body is a plate over a closed cavity on a solid floor. A solid one is
   // sized from the well downward instead, so there is always floor beneath the
   // dome seat for the post to be anchored in.
   const plateT = sw.hollow ? sw.plate : wellDepth + domeH + 0.4;
   const cavityD = sw.hollow ? sw.under : 0;
-  const coverT = sw.hollow ? Math.max(1.2, 5 * layer) : 0;
 
   // Where a cap rides, measured from the plate's top face. A bought switch
   // holds it by the stem; the printed one sinks it into its well.
@@ -257,7 +257,7 @@ export function derive(p: Params): Derived {
       ? (keys - 1) * pitch + cell
       : (keys - 1) * pitch + pocket + 2 * endWall;
   const baseD = cell;
-  const plateTop = sw.hollow ? coverT + cavityD + plateT : floorT + plateT;
+  const plateTop = floorT + cavityD + plateT;
   const baseH = plateTop + rimH;
   const baseCorner = Number(p.baseCorner);
   const chamfer = Math.min(1.2, wallT * 0.5);
@@ -278,8 +278,6 @@ export function derive(p: Params): Derived {
     cellCorner: Number(p.cellCorner),
     rimH, plateTop, capRest, keyTravel, pressedProud,
     plateT, cavityD, wallT, endWall, baseW, baseD, baseH, baseCorner, chamfer,
-    coverT,
-    coverBead: Math.max(0.4, wallT * 0.3),
     floorT,
     wellDepth,
     postR, postH, travel, domeR, domeH, domeWall,

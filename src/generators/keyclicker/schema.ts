@@ -247,7 +247,7 @@ export const keyClickerParams: readonly ParamSpec[] = [
   color('bodyColor', 'Body', { group: 'look', default: '#c8a37a' }),
   color('capColor', 'Keycaps', { group: 'look', default: '#e7cfae' }),
   color('legendColor', 'Legends', { group: 'look', default: '#5b3a22' }),
-  color('coverColor', 'Bottom cover', { group: 'look', default: '#8b93a1' }),
+  color('coverColor', 'Snap domes', { group: 'look', default: '#8b93a1', visibleIf: isPrinted }),
 
   // -------------------------------------------------------------- tolerances
   num('partClearance', 'Fit clearance', {

@@ -2,7 +2,7 @@ import { serialize } from '../../core/kernel/serialize';
 import type { BuildCtx, BuildResult, Generator, Issue, Params, Part } from '../../core/params/types';
 import { missingCharacters } from '../../core/text/textSolid';
 import { derive, keyX, legendChars, SWITCHES, type Derived } from './geometry';
-import { buildBase, buildCover } from './parts/base';
+import { buildBase } from './parts/base';
 import { buildDome, buildKeycap, legendOutline } from './parts/keycap';
 import { keyClickerGroups, keyClickerParams } from './schema';
 
@@ -235,24 +235,10 @@ function build(p: Params, ctx: BuildCtx): BuildResult {
       mesh: serialize(buildBase(ctx, d)),
       color: String(p.bodyColor),
       orientationNote: d.sw.hollow
-        ? d.rimH > 0.05
-          ? 'Print open side down, as laid out. The plate bridges the cavity once, a short span most printers manage without support, and the rim and its chamfer print cleanly on top.'
-          : 'Print plate-side down, open side up. The key cutouts then need no bridging and the only overhang left is the cover rebate.'
+        ? 'Print floor-down, as laid out. The bottom is closed, and the plate bridges the switch cavity once - a short span most printers manage without support.'
         : 'Print wells upward, as laid out. The wells and the dome seats are pockets, so nothing overhangs and nothing needs support.',
     },
   ];
-
-  // A cover only exists to hold bought switches in. A solid body has nothing
-  // to retain, so shipping one would just be a part to lose.
-  if (d.sw.hollow) {
-    parts.push({
-      id: 'cover',
-      name: 'Bottom cover',
-      mesh: serialize(buildCover(ctx, d)),
-      color: String(p.coverColor),
-      orientationNote: 'Print flat, bead upward.',
-    });
-  }
 
   // One part per key: the caps differ by their letter, so they cannot be a
   // quantity. Each cap and its inlay share a group so the plate keeps them
@@ -339,7 +325,7 @@ function build(p: Params, ctx: BuildCtx): BuildResult {
   } else {
     issues.push({
       level: 'warn',
-      message: `You will need ${d.keys} x ${d.sw.label} switches. They clip into the plate from underneath, before the cover goes on.`,
+      message: `You will need ${d.keys} x ${d.sw.label} switches. Push each one down through its cutout from the top until both clips snap under the plate.`,
       paramIds: ['switchType'],
     });
   }
@@ -389,7 +375,7 @@ export const keyClickerGenerator: Generator = {
       values: {
         text: 'EMILY', baseStyle: 'tray', legendFont: 'roboto-slab-bold', legendStyle: 'inlay',
         legendSize: 9, capHeight: 8, keyDepth: 2.5, capCorner: 1.6,
-        bodyColor: '#e9a2b2', capColor: '#f5f2ea', legendColor: '#e27b97', coverColor: '#e9a2b2',
+        bodyColor: '#e9a2b2', capColor: '#f5f2ea', legendColor: '#e27b97',
       },
     },
     {
@@ -397,7 +383,7 @@ export const keyClickerGenerator: Generator = {
       values: {
         text: 'JOY', baseStyle: 'cells', legendFont: 'nunito-extrabold', legendStyle: 'inlay',
         legendSize: 9, capCorner: 3.5, cellCorner: 5, keyDepth: 2,
-        bodyColor: '#ec7a1f', capColor: '#f3e4a8', legendColor: '#ec7a1f', coverColor: '#ec7a1f',
+        bodyColor: '#ec7a1f', capColor: '#f3e4a8', legendColor: '#ec7a1f',
       },
     },
     {

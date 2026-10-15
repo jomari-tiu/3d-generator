@@ -13,6 +13,8 @@ import type { Derived } from '../geometry';
 const MX_ARM = 4.0;
 const MX_SLOT = 1.17;
 const MX_DEPTH = 4.0;
+/** Outside of the round stem around the cross, measured off a cap that fits. */
+const MX_BOSS = 5.57;
 const CHOC_POST = [1.2, 3.0] as const;
 const CHOC_SPACING = 5.7;
 const CHOC_DEPTH = 3.0;
@@ -204,7 +206,7 @@ function buildStem(ctx: BuildCtx, d: Derived): Manifold {
     const slot = MX_SLOT + d.clear;
     const arm = MX_ARM + d.clear;
     // The cross is the HOLE, so the stem is a round boss with a cross cut out.
-    const bossR = arm / 2 + Math.max(1, 2.5 * d.nozzle);
+    const bossR = MX_BOSS / 2;
     const boss = m.Manifold.cylinder(
       MX_DEPTH + d.capTop,
       bossR,
