@@ -260,6 +260,35 @@ describe('key clicker', () => {
     }
   });
 
+  it('thins the plate under the MX clips so a switch snaps in', async () => {
+    const m = await kernel();
+    try {
+      const p = paramsWith({ text: 'A', keyring: false });
+      const d = derive(p);
+      const body = keyClickerGenerator.build(p, ctxFor(m)).parts.find((x) => x.id === 'base')!;
+      const solid = m.Manifold.ofMesh({
+        numProp: body.mesh.numProp,
+        vertProperties: body.mesh.position,
+        triVerts: body.mesh.index,
+      });
+      const bottom = d.plateTop - d.plateT;
+      // Plate material in a 0.4 mm column just outside the cutout edge.
+      const plateAt = (x: number, y: number) =>
+        solid.intersect(
+          m.Manifold.cube([0.4, 0.4, d.plateT], false).translate([x - 0.2, y - 0.2, bottom]),
+        ).volume() / 0.16;
+      const edge = (d.sw.cutout + d.clear) / 2 + 0.4;
+      // Mid-edge on all four sides: thinned to 1.3 mm for the clip to catch.
+      for (const [x, y] of [[0, edge], [0, -edge], [edge, 0], [-edge, 0]]) {
+        expect(plateAt(x!, y!), `clip at ${x},${y}`).toBeCloseTo(1.3, 2);
+      }
+      // Next to the corners the plate keeps its full 1.5 mm.
+      expect(plateAt(edge - 0.6, edge)).toBeCloseTo(d.plateT, 2);
+    } finally {
+      cleanup();
+    }
+  });
+
   it('closes the bottom of the body, with no cover to print', async () => {
     const m = await kernel();
     try {

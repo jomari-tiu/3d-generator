@@ -138,6 +138,16 @@ export function buildBase(ctx: BuildCtx, d: Derived): Manifold {
 }
 
 /**
+ * The MX clips sit mid-way along two opposite edges of the cutout. Nothing in a
+ * clicker fixes which way round a switch goes in, so all four edges are
+ * notched, each a little wider and further out than the clip itself.
+ */
+const MX_CLIP_W = 5.5;
+const MX_CLIP_REACH = 1.0;
+/** Plate left where the clips catch: under 1.5 so a sagging bridge still clicks. */
+const MX_CLIP_PLATE = 1.3;
+
+/**
  * What gets taken out of the plate for one key.
  *
  * A bought switch wants its exact square cutout and nothing else. The printed
@@ -151,11 +161,27 @@ function keyOpening(ctx: BuildCtx, d: Derived): Manifold {
   if (d.sw.cutout > 0) {
     const cut = d.sw.cutout + d.clear;
     // Through the plate only, into the cavity below.
-    return m.Manifold.extrude(roundedRect(m, cut, cut, 0.4), d.plateT + 2).translate([
+    const hole = m.Manifold.extrude(roundedRect(m, cut, cut, 0.4), d.plateT + 2).translate([
       0,
       0,
       top - d.plateT - 1,
     ]);
+    if (d.sw.stem !== 'mx') return hole;
+
+    // Snap notches under the MX clips. The plate prints as a bridge over
+    // the cavity, and a bridge sags: its underside comes out a few tenths low,
+    // the plate ends up thicker than the 1.5 mm the clips are moulded for, and
+    // the switch sits in by friction instead of clicking home. Thinning the
+    // plate to MX_CLIP_PLATE just where the clips catch makes them snap
+    // whatever the bridge does, without loosening the hole itself.
+    const relief = d.plateT - MX_CLIP_PLATE;
+    if (relief <= 0.01) return hole;
+    const notch = m.Manifold.cube([MX_CLIP_W, cut + 2 * MX_CLIP_REACH, relief + 1], true).translate([
+      0,
+      0,
+      top - d.plateT + (relief - 1) / 2,
+    ]);
+    return m.Manifold.union([hole, notch, notch.rotate([0, 0, 90])]);
   }
 
   const wellSize = d.keySize + 2 * d.clear + 0.4;
