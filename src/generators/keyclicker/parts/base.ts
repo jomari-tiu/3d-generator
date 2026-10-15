@@ -100,6 +100,28 @@ export function buildBase(ctx: BuildCtx, d: Derived): Manifold {
     );
   }
 
+  // --- walls under the plate between neighbouring switches. A long tray
+  // prints its plate as one bridge the length of the bar, and that bridge
+  // flexes under a keypress; a rib between each pair of switches carries it
+  // down to the floor. The rib stays clear of the cutout AND of the clip
+  // notches beside it, or the switch would catch on it going in.
+  if (d.sw.hollow && d.supportWalls && d.keys > 1) {
+    const margin = MX_CLIP_REACH + 0.3;
+    const ribW = d.pitch - d.sw.cutout - d.clear - 2 * margin;
+    if (ribW >= 2 * d.nozzle) {
+      const inner = footprint.offset(-d.wallT + 0.01, 'Round');
+      const ribs: CrossSection[] = [];
+      for (let i = 0; i < d.keys - 1; i++) {
+        const x = (keyX(d, i) + keyX(d, i + 1)) / 2;
+        ribs.push(m.CrossSection.square([ribW, d.baseD + 2], true).translate([x, 0]));
+      }
+      // Overlap floor and plate a hair each way so the rib fuses into both
+      // instead of touching them on a plane.
+      const rib = m.CrossSection.union(ribs).intersect(inner);
+      base = base.add(m.Manifold.extrude(rib, d.cavityD + 0.02).translate([0, 0, d.floorT - 0.01]));
+    }
+  }
+
   // --- the pocket the keycaps sit down into
   if (d.rimH > 0.05) {
     const r = d.capCorner + d.keyGap;

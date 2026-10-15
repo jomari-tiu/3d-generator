@@ -141,6 +141,13 @@ function validate(p: Params): Issue[] {
       paramIds: ['fitOffset', 'partClearance'],
     });
   }
+  if (d.sw.stem !== 'post' && d.stemClear < 0.05) {
+    issues.push({
+      level: 'warn',
+      message: `A ${d.stemClear.toFixed(2)} mm stem socket clearance is tight for a printed hole - the switch stem will likely not push into the keycap. Try 0.2 mm.`,
+      paramIds: ['stemClearance', 'fitOffset'],
+    });
+  }
 
   // --- the printed dome, which is the part that has to be honest about itself
   if (d.sw.stem === 'post') {

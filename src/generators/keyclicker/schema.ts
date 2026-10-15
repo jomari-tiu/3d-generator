@@ -213,6 +213,12 @@ export const keyClickerParams: readonly ParamSpec[] = [
     default: 3,
     visibleIf: isTray,
   }),
+  bool('supportWalls', 'Support walls', {
+    group: 'body',
+    default: true,
+    visibleIf: (v) => !isPrinted(v),
+    help: 'A wall under the plate between each pair of switches, so the plate does not flex when you press a key.',
+  }),
   bool('keyring', 'Keyring loop', { group: 'body', default: true }),
   num('loopDiameter', 'Loop hole', {
     group: 'body',
@@ -257,7 +263,16 @@ export const keyClickerParams: readonly ParamSpec[] = [
     max: 0.4,
     step: 0.01,
     default: 0.1,
-    help: 'Applied to the switch cutouts and the stems. Switch fits want this TIGHT - 0.1 mm, not 0.25.',
+    help: 'Applied to the switch cutouts in the plate. Switch fits want this TIGHT - 0.1 mm, not 0.25.',
+  }),
+  num('stemClearance', 'Stem socket clearance', {
+    group: 'tol',
+    unit: 'mm',
+    min: 0,
+    max: 0.4,
+    step: 0.01,
+    default: 0.2,
+    help: 'Added to the cross (or Choc) hole in the keycap. Printed holes come out small - if the switch stem will not push in, raise this; if the cap falls off, lower it.',
   }),
   num('fitOffset', 'Fit offset', {
     group: 'tol',

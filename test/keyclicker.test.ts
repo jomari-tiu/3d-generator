@@ -584,4 +584,33 @@ describe('key clicker top surface', () => {
       cleanup();
     }
   });
+
+  it('loosens the stem socket on its own, leaving the plate cutout tight', async () => {
+    const m = await kernel();
+    try {
+      const vol = (patch: Params, id: string) =>
+        keyClickerGenerator.build(paramsWith({ text: 'AB', ...patch }), ctxFor(m))
+          .parts.find((x) => x.id === id)!.mesh.stats.volumeMm3;
+      // A bigger socket means less cap; the base does not move at all.
+      expect(vol({ stemClearance: 0.3 }, 'cap-0')).toBeLessThan(vol({ stemClearance: 0.1 }, 'cap-0'));
+      expect(vol({ stemClearance: 0.3 }, 'base')).toBeCloseTo(vol({ stemClearance: 0.1 }, 'base'), 3);
+      expect(derive(paramsWith({ stemClearance: 0.25 })).clear).toBeCloseTo(0.1, 6);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('props the plate on a wall between each pair of switches', async () => {
+    const m = await kernel();
+    try {
+      const base = (on: boolean) =>
+        keyClickerGenerator.build(paramsWith({ text: 'KONG', supportWalls: on }), ctxFor(m))
+          .parts.find((x) => x.id === 'base')!.mesh;
+      const withWalls = base(true);
+      const without = base(false);
+      expect(withWalls.stats.volumeMm3).toBeGreaterThan(without.stats.volumeMm3);
+    } finally {
+      cleanup();
+    }
+  });
 });

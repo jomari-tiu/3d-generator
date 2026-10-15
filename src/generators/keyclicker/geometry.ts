@@ -97,6 +97,8 @@ export interface Derived {
   readonly layer: number;
   readonly fit: number;
   readonly clear: number;
+  /** Clearance on the keycap's stem socket -- looser than the plate cutout. */
+  readonly stemClear: number;
 
   readonly sw: SwitchSpec;
   readonly legend: string[];
@@ -161,6 +163,9 @@ export interface Derived {
   readonly domeH: number;
   readonly domeWall: number;
 
+  /** Ribs from floor to plate between neighbouring switches. */
+  readonly supportWalls: boolean;
+
   // --- keyring
   readonly loop: boolean;
   readonly loopD: number;
@@ -179,6 +184,7 @@ export function derive(p: Params): Derived {
   const layer = Number(p.layer);
   const fit = Number(p.fitOffset);
   const clear = Number(p.partClearance) + fit;
+  const stemClear = Number(p.stemClearance ?? 0.2) + fit;
 
   const sw = SWITCHES[String(p.switchType)] ?? SWITCHES.mx!;
   const legend = legendChars(p);
@@ -268,7 +274,7 @@ export function derive(p: Params): Derived {
   const postH = Math.max(1.5, Math.min(wellDepth * 0.8, capH - capTop - 0.6));
 
   return {
-    nozzle, layer, fit, clear,
+    nozzle, layer, fit, clear, stemClear,
     sw, legend, keys,
     pitch, keySize, capH, capTaperDeg, capTopSize, capWall, capTop, capCorner, dish, capDome,
     legendSize: Number(p.legendSize),
@@ -281,6 +287,7 @@ export function derive(p: Params): Derived {
     floorT,
     wellDepth,
     postR, postH, travel, domeR, domeH, domeWall,
+    supportWalls: p.supportWalls !== false,
     loop: p.keyring === true,
     loopD: Number(p.loopDiameter),
     loopSide: String(p.loopPosition),

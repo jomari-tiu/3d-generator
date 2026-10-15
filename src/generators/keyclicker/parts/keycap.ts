@@ -8,7 +8,7 @@ import type { Derived } from '../geometry';
  * Standard stem dimensions. The MX cross is 4.0 x 1.17 mm arms, 4 mm deep, and
  * the Choc pair is two 1.2 x 3.0 mm posts on 5.7 mm centres. Both are copied
  * from the switch, not invented, which is why they are constants and not
- * sliders -- `fitOffset` is the only thing that should be trimming them.
+ * sliders -- `stemClearance` and `fitOffset` are what trim them.
  */
 const MX_ARM = 4.0;
 const MX_SLOT = 1.17;
@@ -203,8 +203,8 @@ function buildStem(ctx: BuildCtx, d: Derived): Manifold {
   const roof = d.capH - d.capTop;
 
   if (d.sw.stem === 'mx') {
-    const slot = MX_SLOT + d.clear;
-    const arm = MX_ARM + d.clear;
+    const slot = MX_SLOT + d.stemClear;
+    const arm = MX_ARM + d.stemClear;
     // The cross is the HOLE, so the stem is a round boss with a cross cut out.
     const bossR = MX_BOSS / 2;
     const boss = m.Manifold.cylinder(
@@ -228,8 +228,8 @@ function buildStem(ctx: BuildCtx, d: Derived): Manifold {
   }
 
   if (d.sw.stem === 'choc') {
-    const w = CHOC_POST[0] + d.clear;
-    const h = CHOC_POST[1] + d.clear;
+    const w = CHOC_POST[0] + d.stemClear;
+    const h = CHOC_POST[1] + d.stemClear;
     const shell = roundedRect(m, CHOC_SPACING + w + 2.4, h + 2.4, 0.8);
     const block = m.Manifold.extrude(shell, CHOC_DEPTH + d.capTop).translate([
       0,
