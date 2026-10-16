@@ -39,6 +39,14 @@ export const cageParams: readonly ParamSpec[] = [
     group: 'base', unit: 'mm', min: 0, max: 10, step: 0.1, default: 4,
     help: 'A hole in a boss where the kit stands, for a display stand or a peg into its foot. 0 leaves it off.',
   }),
+  bool('floorPattern', 'Floor pattern', {
+    group: 'base', default: true,
+    help: 'Deck plates with their corners cut, grilles of slots in some of them and small stencilled marking blocks, across the dock floor. Off, it has plain seams.',
+  }),
+  bool('apron', 'Front apron', {
+    group: 'base', default: true, visibleIf: (v) => v.stairs === true,
+    help: 'A raised deck across the front between the stair towers, three steps high at the crew scale: two flights of steps down its front with pipe handrails, an orange guide band, hatches, vents along its face and pipes down its sides. It pegs onto the floor.',
+  }),
   bool('hazardStripes', 'Floor markings', {
     group: 'base', default: true,
     help: 'A hazard band across the front of the dock and a pad round where the kit stands, as an inlay to print in a second colour.',
@@ -81,7 +89,7 @@ export const cageParams: readonly ParamSpec[] = [
   ),
 
   // ------------------------------------------------------------------- claw
-  ...clawParams('claw', 20, 'A three-talon claw on a chain from a hoist on the cross truss over the kit. Each talon swings on its own pin, so the claw opens and closes round a part.'),
+  ...clawParams('claw', 20, 'A three-talon claw on a chain from a hoist trolley on the cross truss over the kit. The trolley slides from side to side along the truss, held on by a pin under it, and each talon swings on its own pin, so the claw opens and closes round a part.'),
 
   // -------------------------------------------------------------------- fit
   num('clearance', 'Pin clearance', {
@@ -107,6 +115,8 @@ export const cageParams: readonly ParamSpec[] = [
   color('backColor', 'Back frame', { group: 'look', default: '#3d444c', visibleIf: (v) => v.backFrame === true }),
   color('cabinColor', 'Cabin', { group: 'look', default: '#e8e2d0', visibleIf: (v) => v.cabin === true }),
   color('glassColor', 'Cabin glass', { group: 'look', default: '#5fb8ee', visibleIf: (v) => v.cabin === true }),
+  color('apronColor', 'Apron', { group: 'look', default: '#6c747e', visibleIf: (v) => v.apron === true }),
+  color('apronStripeColor', 'Apron guide band', { group: 'look', default: '#f08a1c', visibleIf: (v) => v.apron === true }),
   color('stripeColor', 'Floor markings', { group: 'look', default: '#f5c518', visibleIf: (v) => v.hazardStripes === true }),
   ...stairColourParams('look'),
   ...clawColourParams('look'),

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { cleanup, kernel } from './kernel';
 import { msCageGenerator as gen } from '../src/generators/mscage/build';
 import { derive } from '../src/generators/mscage/geometry';
-import { clawSpec, columns, knobYs } from '../src/generators/mscage/parts';
+import { apronBox, clawSpec, columns, knobYs, trolley } from '../src/generators/mscage/parts';
 import { talonAxis } from '../src/generators/shared/claw';
 import { stairLayout } from '../src/generators/shared/stairs';
 import { coerceAll, defaultsOf } from '../src/core/params/validate';
@@ -169,12 +169,35 @@ describe('MS dock', () => {
   it('hangs the claw from the hoist over the kit and opens its talons', async () => {
     const m = await kernel();
     try {
-      const { d, p, get } = built(m);
+      const { d, p, result, get } = built(m);
       const spec = clawSpec(d, Number(p.clawDrop));
       expect(spec.y).toBeCloseTo(d.kitY, 6);
       const hub = get('claw-hub');
       const chain = get('claw-chain');
-      expect(overlap(chain.translate([0, 0, -0.5]), get('top-frame'))).toBeGreaterThan(0.01);
+      const frame = get('top-frame');
+      const trolleyPart = get('hoist-trolley');
+      const pinPart = get('hoist-pin');
+      // The hook hangs on the trolley's pin.
+      expect(overlap(chain.translate([0, 0, -0.5]), pinPart)).toBeGreaterThan(0.01);
+
+      // The trolley slides along the cross truss with everything it carries,
+      // end to end, touching nothing on the way.
+      const t = trolley(d);
+      expect(t.travel).toBeGreaterThan(40);
+      const rest = result.parts
+        .filter((x) => !x.id.startsWith('claw-') && !x.id.startsWith('hoist-'))
+        .map((x) => solidOf(m, x.mesh));
+      const others = m.Manifold.union(rest);
+      const carried = m.Manifold.union([
+        trolleyPart, pinPart,
+        ...result.parts.filter((x) => x.id.startsWith('claw-')).map((x) => solidOf(m, x.mesh)),
+      ]);
+      for (const dx of [-t.travel, -t.travel / 2, t.travel / 2, t.travel]) {
+        expect(overlap(carried.translate([dx, 0, 0]), others), `at ${dx.toFixed(0)}`).toBeLessThan(0.01);
+      }
+      // It cannot come off: lifted, its pin meets the truss; pushed sideways, its cheeks do.
+      expect(overlap(m.Manifold.union([trolleyPart, pinPart]).translate([0, 0, 2.6]), frame)).toBeGreaterThan(0.01);
+      expect(overlap(trolleyPart.translate([0, 0.5, 0]), frame)).toBeGreaterThan(0.01);
       for (let i = 0; i < 3; i++) {
         const talon = get(`claw-talon-${i}`);
         const pin = get(`claw-pin-${i}`);
@@ -187,6 +210,32 @@ describe('MS dock', () => {
           expect(overlap(moved, pin), `${i} ${deg}`).toBeLessThan(0.01);
         }
       }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('raises the front apron three real steps, with steps down and handrails, pegged to the floor', async () => {
+    const m = await kernel();
+    try {
+      for (const patch of [{}, PRESETS()[1]!]) {
+        const { d, get } = built(m, patch);
+        const a = apronBox(d);
+        const k = d.crewK;
+        // An 18 cm step, three of them up to the deck.
+        expect(a.step / k).toBeCloseTo(0.18, 2);
+        expect(a.z1 - a.z0).toBeCloseTo(3 * a.step, 6);
+        const apron = get('apron');
+        expect(apron.decompose().length).toBe(1);
+        // Between the stair towers, clear of their sills.
+        expect(a.x1).toBeLessThan(d.stairs![1].x0);
+        // Pegged: slid along the floor, it catches.
+        expect(overlap(apron.translate([0.6, 0, 0]), get('base'))).toBeGreaterThan(0.01);
+        // The step handrails stand about a metre over the deck.
+        expect((apron.boundingBox().max[2] - a.z1) / k).toBeGreaterThan(0.85);
+      }
+      // No towers, no apron: it is what sits between them.
+      expect(built(m, { stairs: false }).result.parts.some((x) => x.id === 'apron')).toBe(false);
     } finally {
       cleanup();
     }

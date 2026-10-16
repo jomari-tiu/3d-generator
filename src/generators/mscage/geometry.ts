@@ -19,6 +19,8 @@ export const BACK_T = 3;
 /** The operator cabin on the top right gallery. */
 export const CABIN_D = 20;
 export const CABIN_H = 22;
+/** The hoist trolley's length along the cross truss. */
+export const TROLLEY_L = 9;
 
 /**
  * A walk-around maintenance dock, laid out from the stairs outward.
@@ -68,6 +70,9 @@ export interface Derived {
   readonly joined: boolean;
   readonly jointClear: number;
   readonly backFrame: boolean;
+  /** The raised apron across the front, and the patterned floor. */
+  readonly apron: boolean;
+  readonly floorPattern: boolean;
   readonly cabin: boolean;
   readonly railH: number;
   readonly postSpacing: number;
@@ -141,6 +146,9 @@ export function derive(p: Params): Derived {
     joined: p.connector === 'dovetail',
     jointClear: Number(p.jointClearance),
     backFrame: p.backFrame === true,
+    // Between the stair towers, so only with them.
+    apron: p.apron === true && p.stairs === true,
+    floorPattern: p.floorPattern === true,
     cabin: p.cabin === true,
     railH: Math.max(6.5, 1.05 * crewK),
     postSpacing: Math.max(10, 1.8 * crewK),

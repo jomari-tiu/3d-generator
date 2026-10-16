@@ -5,8 +5,8 @@ import { addClaw, addStairs } from '../shared/parts';
 import { stairCheck, stairLayout } from '../shared/stairs';
 import { CABIN_H, COLUMN, derive, type Derived } from './geometry';
 import {
-  buildBackFrame, buildBase, buildBaseStripes, buildCabin, buildCabinGlass, buildColumn, buildGallery,
-  buildTopFrame, clawSpec, columns,
+  apronBox, buildApron, buildApronStripe, buildBackFrame, buildBase, buildBaseStripes, buildCabin, buildCabinGlass, buildColumn, buildGallery,
+  buildTopFrame, buildTrolley, buildTrolleyPin, clawSpec, columns, trolley,
 } from './parts';
 import { cageGroups, cageParams } from './schema';
 
@@ -54,6 +54,12 @@ function validate(p: Params): Issue[] {
   }
   const cl = clawOf(p, d);
   if (cl && clawLayout(cl).hubBottom - 20 < d.baseH + 10) err('The claw hangs down to the floor. Shorten its chain.', ['clawDrop']);
+  if (d.apron) {
+    const a = apronBox(d);
+    if (a.y1 - a.y0 < 14 || a.x1 - a.x0 < 4 * a.stairW) {
+      err('There is not room for the front apron between the stair towers. Make the dock deeper or the towers narrower, or turn the apron off.', ['apron', 'cageDepth', 'stairSpan']);
+    }
+  }
   return issues;
 }
 
@@ -67,6 +73,7 @@ function readouts(d: Derived): Record<string, string> {
     const c = stairCheck(d.stairs[0]);
     out.Stairs = `${c.flights} flights a side, ${c.realRise.toFixed(0)} cm steps at 1/${c.scale}`;
   }
+  out.Hoist = `slides ${fmt(trolley(d).travel)} mm either way along the cross truss`;
   if (d.joined) out.Joining = 'keys on the right, sockets on the left: press the next dock on from above';
   return out;
 }
@@ -121,6 +128,17 @@ function build(p: Params, ctx: BuildCtx): BuildResult {
     });
   }
 
+  if (d.apron) {
+    parts.push({
+      id: 'apron', name: 'Front apron', mesh: serialize(buildApron(m, d)),
+      color: String(p.apronColor), group: 'apron',
+      orientationNote: 'Print flat, as it sits. Its pegs go into the floor in front of the dock.',
+    });
+    parts.push({
+      id: 'apron-stripe', name: 'Apron guide band', mesh: serialize(buildApronStripe(m, d)),
+      color: String(p.apronStripeColor), group: 'apron', orientationNote: 'An inlay, flush in the apron\'s deck.',
+    });
+  }
   const bayW = d.stairs ? stairLayout(d.stairs[0]).bay : 0;
   for (const side of [-1, 1] as const) {
     d.levels.forEach((z, i) => {
@@ -150,7 +168,27 @@ function build(p: Params, ctx: BuildCtx): BuildResult {
     addStairs(parts, m, right, String(p.stairColor), String(p.stairRailColor), 'right');
   }
   const cl = clawOf(p, d);
-  if (cl) addClaw(m, parts, cl, String(p.clawColor), String(p.chainColor), String(p.pinColor), d.printedPins);
+  if (cl) {
+    parts.push({
+      id: 'hoist-trolley',
+      name: 'Hoist trolley',
+      mesh: serialize(buildTrolley(m, d)),
+      color: frame,
+      orientation: [180, 0, 0],
+      orientationNote: 'Print upside down, the housing on the bed. Sit it over the cross truss and push its pin through under the truss: it slides from side to side and carries the claw.',
+    });
+    if (d.printedPins) {
+      parts.push({
+        id: 'hoist-pin',
+        name: 'Hoist pin',
+        mesh: serialize(buildTrolleyPin(m, d)),
+        color: String(p.pinColor),
+        orientation: [-90, 0, 0],
+        orientationNote: 'Print standing on its head.',
+      });
+    }
+    addClaw(m, parts, cl, String(p.clawColor), String(p.chainColor), String(p.pinColor), d.printedPins);
+  }
   return { parts, issues, readouts: readouts(d) };
 }
 
