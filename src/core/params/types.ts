@@ -231,6 +231,14 @@ export interface Generator {
    * user input, which is why the picker can insert it as markup.
    */
   readonly art?: string;
+  /**
+   * Generators that are different designs of the same kind of thing share a
+   * family, and the editor shows them as tabs -- one per design, each label
+   * the generator's own -- so switching between them is one click and each
+   * keeps its own settings. Still declared by the generator, so the UI learns
+   * nothing about any particular one.
+   */
+  readonly family?: { readonly id: string; readonly label: string };
   readonly params: readonly ParamSpec[];
   readonly groups: readonly ParamGroup[];
   /**

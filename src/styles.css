@@ -161,6 +161,34 @@ button, select, input {
   margin-bottom: 6px;
 }
 
+/* ---------- family tabs: different designs of the same thing ---------- */
+
+.family-tabs {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+.family-tabs[hidden] { display: none; }
+
+.family-tab {
+  flex: 1 1 0;
+  padding: 8px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.family-tab:hover { color: var(--text); border-color: var(--muted); }
+.family-tab.active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
 /* ---------- sidebar tabs ---------- */
 
 /* Sticky, because the whole point is knowing where you are: scroll down inside

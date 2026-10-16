@@ -4,7 +4,7 @@ A browser app that turns parameters into **print-ready 3D models**. Everything i
 in millimetres, built with a solid-modelling kernel, and exported as watertight STL / 3MF.
 
 Open it and you land on a **model picker** — choose what you want to print, set it up, export it.
-Six generators so far:
+The generators so far:
 
 - **Name tag** — lettering on a plate, with five ready-made school-tag shapes and an optional
   grade-and-section line under the name.
@@ -18,6 +18,14 @@ Six generators so far:
   storeys you lift apart to see inside. It can be an L that fits the
   inside corner of a shelf, have brick, stone, siding, board-and-batten or precast-panel walls, and
   carry a helipad, roof garden, plant, water tank or solar panels on its roof — or no roof at all.
+- **Mobile suit hangar** — a maintenance-bay diorama for a Gunpla kit, sized for 1/144 or
+  1/100. The parts move: a shutter door slides open in a dovetail track, a swing bridge turns
+  out from the catwalk on a pin, and a lattice gantry tower slides along a floor rail with a
+  crane arm that swings round on top. Walls plug into the base and nothing needs supports.
+- **MS cage** — a maintenance cage for a Gunpla kit: a base, two pillars and truss beams,
+  maintenance arms at up to six levels that swing in on hinge pins, and a waist support with a
+  cradle. Bases carry dovetail keys on one side and sockets on the other, so cages press
+  together into a row.
 - **Image to SVG** — drop in a logo, a signature or an icon, trace it to clean vector outlines,
   download the **SVG**, and print it as a plaque, a silhouette or a stencil.
 - **Pattern** — perforations, tilings, hatching and Voronoi cells, as a **DXF sketch for
@@ -67,7 +75,7 @@ generator is still exactly one module, and it appears on the front page for free
 
 ```
 src/core/       kernel, text-to-solid, image-to-outline, pattern, params, exporters (DOM-free)
-src/generators/ nametag/, keychain/, keyclicker/, building/, imagetrace/, pattern/
+src/generators/ nametag/, keychain/, keyclicker/, building/, shelf/, drawer/, hangar/, mscage/, imagetrace/, pattern/
 src/ui/         viewer, schema-driven panel, picker, image decode + store, app shell
 ```
 

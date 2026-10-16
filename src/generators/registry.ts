@@ -1,8 +1,10 @@
 import type { Generator } from '../core/params/types';
 import { buildingGenerator } from './building/build';
 import { drawerOrganizerGenerator } from './drawer/build';
+import { hangarGenerator } from './hangar/build';
 import { imageTraceGenerator } from './imagetrace/build';
 import { keyClickerGenerator } from './keyclicker/build';
+import { msCageGenerator } from './mscage/build';
 import { keychainGenerator } from './keychain/build';
 import { nameTagGenerator } from './nametag/build';
 import { patternGenerator } from './pattern/build';
@@ -15,6 +17,8 @@ export const GENERATORS: readonly Generator[] = [
   buildingGenerator,
   shelfGenerator,
   drawerOrganizerGenerator,
+  hangarGenerator,
+  msCageGenerator,
   imageTraceGenerator,
   patternGenerator,
 ];

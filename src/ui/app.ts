@@ -34,6 +34,31 @@ import { Viewer } from './viewer';
 
 const PRESET_STORE = '3dgen.presets.v1';
 const TEMPLATE_STORE = '3dgen.templates.v1';
+const LAST_VALUES_STORE = '3dgen.last-values.v1';
+
+/**
+ * Each generator's last settings, from the browser. A convenience only: a
+ * private window, cleared site data or a blocked store just means every
+ * generator starts from its defaults, as it always did.
+ */
+function loadLastValues(): Map<string, Params> {
+  try {
+    const raw = localStorage.getItem(LAST_VALUES_STORE);
+    const parsed: unknown = raw ? JSON.parse(raw) : {};
+    if (parsed && typeof parsed === 'object') return new Map(Object.entries(parsed as Record<string, Params>));
+  } catch {
+    // Unreadable is the same as empty.
+  }
+  return new Map();
+}
+
+function saveLastValues(values: Map<string, Params>): void {
+  try {
+    localStorage.setItem(LAST_VALUES_STORE, JSON.stringify(Object.fromEntries(values)));
+  } catch {
+    // Not remembering is fine; the session still has them.
+  }
+}
 
 interface SavedPresets {
   [generatorId: string]: { [name: string]: Params };
@@ -63,6 +88,12 @@ export class App {
 
   private gen: Generator;
   private values: Params;
+  /**
+   * The settings each generator was last left at, so going back to one --
+   * by its family tab or by the picker -- carries on where you left it
+   * rather than starting over. Kept in the browser too, best effort.
+   */
+  private readonly lastValues: Map<string, Params> = loadLastValues();
   private lastResult: BuildResult | null = null;
   private lastPlates: PlateSet | null = null;
   /** What the exported file holds: the print plate, or the assembled model. */
@@ -131,6 +162,7 @@ export class App {
 
     this.panel.render(this.gen, this.values);
     this.panel.setValues(this.values);
+    this.renderFamilyTabs();
     this.refreshResetState();
 
     // The picker sits over a fully laid-out editor rather than replacing it, so
@@ -174,8 +206,9 @@ export class App {
   }
 
   private openGenerator(id: string): void {
+    this.rememberValues();
     this.gen = generatorById(id);
-    this.values = defaultsOf(this.gen);
+    this.values = this.recalledValues(this.gen);
     this.reloadPanel();
     this.setView('editor');
     history.pushState(null, '', `#${encodeParams(this.gen, this.values)}`);
@@ -193,6 +226,7 @@ export class App {
     if (picker) picker.value = this.gen.id;
     const desc = document.getElementById('gen-desc');
     if (desc) desc.textContent = this.gen.description;
+    this.renderFamilyTabs();
     this.panel.render(this.gen, this.values);
     this.panel.setValues(this.values);
     this.refreshPresetList();
@@ -294,6 +328,12 @@ export class App {
     picker.value = this.gen.id;
     picker.addEventListener('change', () => this.switchGenerator(picker.value));
     head.appendChild(picker);
+
+    const family = div('family-tabs');
+    family.id = 'family-tabs';
+    family.setAttribute('role', 'group');
+    family.setAttribute('aria-label', 'Designs');
+    head.appendChild(family);
 
     const desc = div('hint');
     desc.textContent = this.gen.description;
@@ -499,11 +539,45 @@ export class App {
   }
 
   private switchGenerator(id: string): void {
+    if (id === this.gen.id) return;
+    this.rememberValues();
     this.gen = generatorById(id);
-    this.values = defaultsOf(this.gen);
+    this.values = this.recalledValues(this.gen);
     this.reloadPanel();
     this.rebuild(true);
     this.syncHash();
+  }
+
+  /** Keep what this generator is set to, for coming back to it. */
+  private rememberValues(): void {
+    this.lastValues.set(this.gen.id, { ...this.values });
+    saveLastValues(this.lastValues);
+  }
+
+  /** What a generator was last left at, or its defaults the first time. */
+  private recalledValues(gen: Generator): Params {
+    const last = this.lastValues.get(gen.id);
+    return last ? coerceAll(gen, last) : defaultsOf(gen);
+  }
+
+  /**
+   * One tab per generator in this one's family, or no bar at all. Each tab is
+   * a different design of the same thing, and keeps its own settings.
+   */
+  private renderFamilyTabs(): void {
+    const bar = document.getElementById('family-tabs');
+    if (!bar) return;
+    bar.textContent = '';
+    const family = this.gen.family;
+    const members = family ? GENERATORS.filter((g) => g.family?.id === family.id) : [];
+    bar.hidden = members.length < 2;
+    for (const g of members) {
+      const b = button(g.family!.label, g.id === this.gen.id ? 'family-tab active' : 'family-tab');
+      b.title = `${g.name}: ${g.tagline ?? g.description}`;
+      b.setAttribute('aria-pressed', String(g.id === this.gen.id));
+      b.addEventListener('click', () => this.switchGenerator(g.id));
+      bar.appendChild(b);
+    }
   }
 
   // ------------------------------------------------------------------- build
@@ -954,6 +1028,7 @@ export class App {
   private syncHash(): void {
     const encoded = encodeParams(this.gen, this.values);
     history.replaceState(null, '', `#${encoded}`);
+    this.rememberValues();
   }
 
   private async copyLink(btn: HTMLButtonElement): Promise<void> {
