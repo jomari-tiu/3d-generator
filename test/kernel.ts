@@ -7,7 +7,7 @@ import Module from 'manifold-3d';
 import { garbageCollectManifold, cleanup } from 'manifold-3d/lib/garbage-collector';
 import type { ManifoldToplevel } from 'manifold-3d';
 import { parse, type Font } from 'opentype.js';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
 let cached: ManifoldToplevel | null = null;
 
@@ -39,7 +39,8 @@ const fonts = new Map<string, Font>();
 export function loadFont(id: string): Font {
   const hit = fonts.get(id);
   if (hit) return hit;
-  const buf = readFileSync(`public/fonts/${id}.woff`);
+  // Bundled faces are .woff, except where the family ships as .ttf.
+  const buf = existsSync(`public/fonts/${id}.woff`) ? readFileSync(`public/fonts/${id}.woff`) : readFileSync(`public/fonts/${id}.ttf`);
   const font = parse(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
   fonts.set(id, font);
   return font;

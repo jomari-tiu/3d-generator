@@ -145,6 +145,11 @@ export function buildRing(
       attachY = y;
     }
   }
+  // Centred whenever the middle is nearly as good. On a backing every height
+  // is a near-tie, and the strict maximum lands the eye off to one side of
+  // the end for the sake of a few square millimetres.
+  const middle = (b.min[1] + b.max[1]) / 2;
+  if (bandAt(middle).intersect(window).area() >= best * 0.9) attachY = middle;
 
   // Drive the neck in until the joint carries its weight.
   //

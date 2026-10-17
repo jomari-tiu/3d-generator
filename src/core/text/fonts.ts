@@ -21,6 +21,10 @@ export const BUNDLED_FONTS: readonly FontEntry[] = [
   { id: 'bebas-neue', label: 'Bebas Neue', url: 'fonts/bebas-neue.woff' },
   { id: 'nunito-extrabold', label: 'Nunito ExtraBold', url: 'fonts/nunito-extrabold.woff' },
   { id: 'archivo-black', label: 'Archivo Black', url: 'fonts/archivo-black.woff' },
+  { id: 'chicle', label: 'Chicle (groovy)', url: 'fonts/chicle.woff' },
+  { id: 'oi', label: 'Oi (groovy, extra fat)', url: 'fonts/oi.ttf' },
+  { id: 'bagel-fat-one', label: 'Bagel Fat One (bubbly)', url: 'fonts/bagel-fat-one.woff' },
+  { id: 'coiny', label: 'Coiny (round)', url: 'fonts/coiny.woff' },
   {
     id: 'pacifico',
     label: 'Pacifico (script)',

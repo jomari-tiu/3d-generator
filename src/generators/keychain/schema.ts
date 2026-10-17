@@ -1,4 +1,4 @@
-import { choice, color, font, num, text } from '../../core/params/dsl';
+import { bool, choice, color, font, num, text } from '../../core/params/dsl';
 import type { ParamGroup, ParamSpec } from '../../core/params/types';
 
 export const keychainGroups: readonly ParamGroup[] = [
@@ -6,6 +6,7 @@ export const keychainGroups: readonly ParamGroup[] = [
   { id: 'text', label: 'Word', tab: 'Design' },
   { id: 'body', label: 'Body', tab: 'Shape' },
   { id: 'join', label: 'Joining the letters', tab: 'Shape' },
+  { id: 'stagger', label: 'Alternate heights', tab: 'Shape' },
   { id: 'ring', label: 'Keyring', tab: 'Shape' },
   { id: 'look', label: 'Colours', tab: 'Output' },
   { id: 'printer', label: 'Printer', tab: 'Output', collapsed: true },
@@ -63,6 +64,24 @@ export const keychainParams: readonly ParamSpec[] = [
       { value: 'vertical', label: 'Vertical - one letter per row, reading down' },
     ],
     help: 'Vertical hangs off a bag or a zip and reads downward.',
+  }),
+  num('widthScale', 'Letter width', {
+    group: 'text',
+    unit: '%',
+    min: 40,
+    max: 160,
+    step: 1,
+    default: 100,
+    help: 'Stretches every letter sideways. Opens a condensed face up into wide, round letters.',
+  }),
+  num('weight', 'Letter weight', {
+    group: 'text',
+    unit: 'mm',
+    min: -1.5,
+    max: 1.5,
+    step: 0.1,
+    default: 0,
+    help: 'Grows every letter outward with rounded corners, or thins it below zero. Up turns a slim display face fat and soft; down opens the slits in a very fat one. Changes the letter spacing by twice as much.',
   }),
   num('letterSpacing', 'Letter spacing', {
     group: 'text',
@@ -183,6 +202,19 @@ export const keychainParams: readonly ParamSpec[] = [
     step: 0.2,
     default: 2.5,
     visibleIf: (v) => v.style === 'solid' && v.join === 'bar',
+  }),
+
+  // ---------------------------------------------------------------- stagger
+  bool('stagger', 'Alternate heights', {
+    group: 'stagger',
+    default: false,
+    visibleIf: isSolid,
+    help: 'Every other letter stands tall - the first, third, fifth - and the ones between sit low, tucked under their neighbours. Tighten the letter spacing so they overlap.',
+  }),
+  num('lowHeight', 'Low letter height', {
+    group: 'stagger', unit: 'mm', min: 1, max: 8, step: 0.2, default: 3,
+    visibleIf: (v) => isSolid(v) && v.stagger === true,
+    help: 'Height of the low letters. The tall ones rise to the full thickness; the keyring eye stops at this height.',
   }),
 
   // ------------------------------------------------------------------- ring

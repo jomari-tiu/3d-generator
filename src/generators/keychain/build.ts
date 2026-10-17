@@ -114,8 +114,29 @@ function build(p: Params, ctx: BuildCtx): BuildResult {
     });
   }
 
-  const letters: readonly PlacedLetter[] = layout.letters;
-  const word = layout.word;
+  // Letter weight: every glyph grown outward (or thinned, below zero) with round corners, after
+  // layout so the spacing the font set is what the extra weight eats into.
+  // A slim display face comes out fat and soft, the way bubble lettering is.
+  //
+  // Letter width first: the whole row stretched along its length, so a
+  // condensed face can be opened up to round, wide letters and the spacing
+  // stretches with it.
+  const weight = Number(p.weight ?? 0);
+  const widen = Number(p.widthScale ?? 100) / 100;
+  const reshaped = weight !== 0 || widen !== 1;
+  const letters: readonly PlacedLetter[] = reshaped
+    ? layout.letters.map((l) => {
+        let section = widen !== 1 ? l.section.scale([widen, 1]) : l.section;
+        // Growing rounds the outside corners on its own. Thinning does not --
+        // an inward offset only rounds the inside ones -- so it goes in past
+        // the target and comes back out, which rounds the outside corners by
+        // the same amount: a slimmed fat face comes out soft, not boxy.
+        if (weight > 0) section = section.offset(weight, 'Round', 2, 32);
+        else if (weight < 0) section = section.offset(weight * 2, 'Round', 2, 32).offset(-weight, 'Round', 2, 32);
+        return { ...l, section };
+      })
+    : layout.letters;
+  const word = reshaped ? m.CrossSection.union(letters.map((l) => l.section)) : layout.word;
 
   // ------------------------------------------------------------- 2D bodies
   let body: Body;
@@ -153,6 +174,15 @@ function build(p: Params, ctx: BuildCtx): BuildResult {
       : { section: halo, halo: null };
   }
 
+  // ------------------------------------------------------ alternate heights
+  // Every other letter stands tall -- the first, third, fifth -- and the ones
+  // between sit low, tucked in under their neighbours where they overlap.
+  // Everything that is not a tall letter (the low letters, the welds between
+  // letters, the keyring eye) is the low layer.
+  const stagger = solid && p.stagger === true;
+  const lowHeight = Math.min(Number(p.lowHeight ?? 0), thickness - 0.4);
+  const base2D = body.section;
+
   // ------------------------------------------------------------------ ring
   const ringMode = String(p.ring);
   const ringHole = Number(p.ringHole);
@@ -160,7 +190,7 @@ function build(p: Params, ctx: BuildCtx): BuildResult {
   const ring =
     ringMode === 'none'
       ? null
-      : buildRing(m, body.section, {
+      : buildRing(m, base2D, {
           holeD: ringHole,
           wall: ringWall,
           gap: Number(p.ringGap),
@@ -190,7 +220,16 @@ function build(p: Params, ctx: BuildCtx): BuildResult {
   // Connectivity is checked on the section WITH the ring and WITHOUT the hole:
   // the hole is a feature of the eye, and cutting it first would just confuse
   // the piece count.
-  const connected = ring ? body.section.add(ring.solid) : body.section;
+  // On a backed keychain the eye is blended into the backing with a broad
+  // fillet, so it reads as a tab grown out of it rather than a ring on a
+  // neck. Only round the join: the same closing over the whole outline would
+  // fill in the scallops between the letters too.
+  let connected = ring ? base2D.add(ring.solid) : base2D;
+  if (ring && !solid) {
+    const r = Math.max(Number(p.smooth) * 1.6, 1.2);
+    const near = m.CrossSection.circle(ring.outerD / 2 + r * 2.5, 64).translate([ring.centre[0], ring.centre[1]]);
+    connected = connected.add(filletProfile(connected, r, 32).intersect(near));
+  }
   const loose = looseLetters(connected, letters);
   const pieceCount = connected.decompose().length;
 
@@ -235,10 +274,17 @@ function build(p: Params, ctx: BuildCtx): BuildResult {
   const flatNote = 'Prints flat on its back, lettering upward. No supports.';
 
   if (solid) {
+    // Staggered, the tall letters rise the full thickness and the rest stops at
+    // the low height. Both start at z = 0 so they overlap rather than meet on
+    // a plane.
+    const tall = stagger ? letters.filter((_, i) => i % 2 === 0).map((l) => l.section) : [];
+    const solid3D = stagger
+      ? section.extrude(lowHeight).add(m.CrossSection.union(tall).extrude(thickness))
+      : section.extrude(thickness);
     parts.push({
       id: 'keychain',
       name: 'Keychain',
-      mesh: serialize(section.extrude(thickness)),
+      mesh: serialize(solid3D),
       color: letterColor,
       orientationNote: flatNote,
     });
@@ -347,58 +393,36 @@ export const keychainGenerator: Generator = {
   build,
   presets: [
     {
-      label: 'PEACE - solid, lime',
+      // Groovy 70s lettering, raised on a bubbly backing that follows it, all
+      // in one colour; hung from the eye, the word runs down the tag.
+      label: 'MAMA - groovy, pink',
       values: {
-        style: 'solid', text: 'PEACE', font: 'inter-bold', fontSize: 15,
-        letterColor: '#b7e04b', thickness: 3, join: 'weld', overlap: 0.9, weldRadius: 0.7,
+        style: 'outline', text: 'MAMA', font: 'chicle', direction: 'horizontal',
+        fontSize: 16, widthScale: 85, weight: 0.25, letterSpacing: 3, thickness: 3, letterHeight: 3,
+        outlineWidth: 3, smooth: 2.4, ring: 'start', ringHole: 4.5, ringWall: 4, ringGap: 0,
+        plateColor: '#efb7bd', letterColor: '#efb7bd',
       },
     },
     {
-      label: 'LOVE - solid, pink',
+      // Bubbly letters packed so they overlap, every other one standing tall
+      // over the low ones between; a small eye off the low layer.
+      label: 'BHENG - bubbly, alternating, lavender',
       values: {
-        style: 'solid', text: 'LOVE', font: 'inter-bold', fontSize: 16,
-        letterColor: '#ef4d94', thickness: 3.4, join: 'weld', overlap: 1.1, weldRadius: 0.8,
+        style: 'solid', text: 'BHENG', font: 'bagel-fat-one', direction: 'horizontal',
+        fontSize: 13, thickness: 6, join: 'none', letterSpacing: -1.6, weldRadius: 0.3,
+        stagger: true, lowHeight: 3,
+        ring: 'start', ringHole: 3.5, ringWall: 1.8, ringGap: 0.2,
+        letterColor: '#a99bd8',
       },
     },
     {
-      label: 'Name - outlined, black',
+      label: 'aaron - round, alternating, slate',
       values: {
-        style: 'outline', text: 'Natasha', font: 'nunito-extrabold', fontSize: 12,
-        plateColor: '#1c1c20', letterColor: '#ffffff', outlineWidth: 2.6, smooth: 1.4,
-        thickness: 2.6, letterHeight: 1.2,
-      },
-    },
-    {
-      label: 'Name - outlined, red',
-      values: {
-        style: 'outline', text: 'Joshua', font: 'nunito-extrabold', fontSize: 12,
-        plateColor: '#e14b3f', letterColor: '#ffffff', outlineWidth: 2.6, smooth: 1.4,
-        thickness: 2.6, letterHeight: 1.2,
-      },
-    },
-    {
-      label: 'Name - double outline',
-      values: {
-        style: 'double', text: 'Dylan', font: 'nunito-extrabold', fontSize: 12,
-        plateColor: '#f0a500', rimColor: '#ffffff', letterColor: '#7a4b12',
-        outlineWidth: 2.2, outlineWidth2: 1.8, smooth: 1.2, thickness: 2.4,
-        rimHeight: 0.8, letterHeight: 1.0,
-      },
-    },
-    {
-      label: 'Vertical zip pull',
-      values: {
-        style: 'solid', text: 'GYM', font: 'bebas-neue', direction: 'vertical',
-        fontSize: 13, lineGap: 0, letterColor: '#4ec3e0', thickness: 3,
-        join: 'weld', overlap: 0.9, weldRadius: 0.3, ringHole: 4,
-      },
-    },
-    {
-      label: 'Bag tag - vertical, outlined',
-      values: {
-        style: 'outline', text: 'CAMP', direction: 'vertical', fontSize: 11,
-        lineGap: 1.5, outlineWidth: 2.4, smooth: 1.2,
-        plateColor: '#2f6fb3', letterColor: '#f2f4f8',
+        style: 'solid', text: 'aaron', font: 'coiny', direction: 'horizontal',
+        fontSize: 16, thickness: 6, join: 'none', letterSpacing: -3, weldRadius: 0.3,
+        stagger: true, lowHeight: 3,
+        ring: 'start', ringHole: 3.5, ringWall: 1.8, ringGap: 0.2,
+        letterColor: '#5d6e7e',
       },
     },
   ],
