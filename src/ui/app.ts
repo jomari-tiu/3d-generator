@@ -726,7 +726,7 @@ export class App {
         result.parts.map((part) => ({
           id: part.id,
           name: part.name,
-          geometry: assembledToBufferGeometry(part.mesh, part.assembly),
+          geometry: assembledToBufferGeometry(part.mesh, part.assembly, part.pose),
           color: part.color,
           visible: shown(part.id),
         })),

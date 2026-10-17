@@ -115,6 +115,24 @@ function translate(
   return out;
 }
 
+/**
+ * Points through a column-major 4x4 rigid transform, into a NEW array -- the
+ * input is often the mesh's own, and the build result is cached.
+ */
+export function transformPoints(positions: Float32Array, mat: readonly number[]): Float32Array {
+  const e = (i: number): number => mat[i] ?? 0;
+  const out = new Float32Array(positions.length);
+  for (let i = 0; i < positions.length; i += 3) {
+    const x = positions[i]!;
+    const y = positions[i + 1]!;
+    const z = positions[i + 2]!;
+    out[i] = e(0) * x + e(4) * y + e(8) * z + e(12);
+    out[i + 1] = e(1) * x + e(5) * y + e(9) * z + e(13);
+    out[i + 2] = e(2) * x + e(6) * y + e(10) * z + e(14);
+  }
+  return out;
+}
+
 /** Rotate into print orientation, without dropping or packing. */
 function layRotated(part: Part): LaidOutPart & { minZ: number } {
   const raw: RawMesh = part.mesh;
@@ -157,7 +175,8 @@ export function layAssembled(parts: readonly Part[]): LaidOutPart[] {
     // walk the cached build result away from the origin on every export.
     const xyz = new Float32Array(deinterleave(part.mesh));
     const [dx, dy, dz] = part.assembly ?? [0, 0, 0];
-    const moved = dx === 0 && dy === 0 && dz === 0 ? xyz : translate(xyz, dx, dy, dz);
+    const shifted = dx === 0 && dy === 0 && dz === 0 ? xyz : translate(xyz, dx, dy, dz);
+    const moved = part.pose ? transformPoints(shifted, part.pose) : shifted;
     const b = bounds(moved);
     return {
       id: part.id,

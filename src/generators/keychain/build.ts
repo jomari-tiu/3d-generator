@@ -300,6 +300,7 @@ function build(p: Params, ctx: BuildCtx): BuildResult {
 export const keychainGenerator: Generator = {
   id: 'keychain',
   name: 'Lettering keychain',
+  family: { id: 'keychain', label: 'Flat letters' },
   description: 'A word as a keychain - solid letters, or letters on a backing that follows them.',
   tagline: 'Names and words as keyrings, welded into one solid piece',
   highlights: [

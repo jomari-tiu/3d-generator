@@ -1,4 +1,5 @@
 import { BufferAttribute, BufferGeometry } from 'three';
+import { transformPoints } from '../core/build/layout';
 import { deinterleave } from '../core/kernel/serialize';
 import type { RawMesh } from '../core/kernel/types';
 
@@ -33,8 +34,9 @@ export function toBufferGeometry(mesh: RawMesh): BufferGeometry {
 export function assembledToBufferGeometry(
   mesh: RawMesh,
   offset: readonly [number, number, number] = [0, 0, 0],
+  pose?: readonly number[],
 ): BufferGeometry {
-  const xyz = new Float32Array(deinterleave(mesh));
+  let xyz: Float32Array = new Float32Array(deinterleave(mesh));
   const [dx, dy, dz] = [offset[0] ?? 0, offset[1] ?? 0, offset[2] ?? 0];
   if (dx !== 0 || dy !== 0 || dz !== 0) {
     for (let i = 0; i < xyz.length; i += 3) {
@@ -43,6 +45,7 @@ export function assembledToBufferGeometry(
       xyz[i + 2] = (xyz[i + 2] ?? 0) + dz;
     }
   }
+  if (pose) xyz = transformPoints(xyz, pose);
   const g = new BufferGeometry();
   g.setAttribute('position', new BufferAttribute(xyz, 3));
   g.setIndex(new BufferAttribute(mesh.index, 1));

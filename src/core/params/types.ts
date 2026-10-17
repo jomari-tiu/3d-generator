@@ -145,10 +145,20 @@ export interface Part {
    * the only sane frame to cut a stem socket in, and would otherwise stack on
    * top of its neighbours in the assembled view.
    *
-   * Translation, not a transform: nothing in this project models a part in the
-   * wrong ORIENTATION, so a rotation here would be unused machinery.
+   * Translation only. A part that has to be TURNED to sit in the assembled
+   * model says so with `pose` instead.
    */
   readonly assembly?: readonly [number, number, number];
+  /**
+   * A rigid transform for the ASSEMBLED model, applied after `assembly`: a
+   * 4x4 matrix, column-major (three.js order). Preview and assembled export
+   * only -- the print never sees it.
+   *
+   * For parts that print in one pose and are shown in another: a hinged chain
+   * of letters prints flat and straight, and the only way to show that it
+   * moves is to draw each link turned on its hinge.
+   */
+  readonly pose?: readonly number[];
   readonly quantity?: number;
   /**
    * Parts sharing a group are ONE printed object made of several coloured

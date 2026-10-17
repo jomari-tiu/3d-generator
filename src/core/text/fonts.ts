@@ -20,6 +20,7 @@ export const BUNDLED_FONTS: readonly FontEntry[] = [
   { id: 'roboto-slab-bold', label: 'Roboto Slab Bold', url: 'fonts/roboto-slab-bold.woff' },
   { id: 'bebas-neue', label: 'Bebas Neue', url: 'fonts/bebas-neue.woff' },
   { id: 'nunito-extrabold', label: 'Nunito ExtraBold', url: 'fonts/nunito-extrabold.woff' },
+  { id: 'archivo-black', label: 'Archivo Black', url: 'fonts/archivo-black.woff' },
   {
     id: 'pacifico',
     label: 'Pacifico (script)',
