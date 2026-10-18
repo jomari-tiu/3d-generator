@@ -5,20 +5,22 @@ import { hangarGenerator } from './hangar/build';
 import { imageTraceGenerator } from './imagetrace/build';
 import { keyClickerGenerator } from './keyclicker/build';
 import { msCageGenerator } from './mscage/build';
-import { flexiNameGenerator } from './flexiname/build';
 import { keychainGenerator } from './keychain/build';
+import { logoKeychainGenerator } from './logokeychain/build';
 import { nameTagGenerator } from './nametag/build';
 import { patternGenerator } from './pattern/build';
+import { pegboardGenerator } from './pegboard/build';
 import { shelfGenerator } from './shelf/build';
 
 export const GENERATORS: readonly Generator[] = [
   nameTagGenerator,
   keychainGenerator,
-  flexiNameGenerator,
+  logoKeychainGenerator,
   keyClickerGenerator,
   buildingGenerator,
   shelfGenerator,
   drawerOrganizerGenerator,
+  pegboardGenerator,
   hangarGenerator,
   msCageGenerator,
   imageTraceGenerator,

@@ -159,6 +159,20 @@ export interface Part {
    * moves is to draw each link turned on its hinge.
    */
   readonly pose?: readonly number[];
+  /**
+   * Which way, and how far, this part moves apart from the rest in the
+   * exploded view: a translation applied after `assembly` and `pose`. Preview
+   * only. A generator that declares none on any part gets no Explode button,
+   * since only it knows which way its pieces come apart.
+   */
+  readonly explode?: readonly [number, number, number];
+  /**
+   * Shown in the assembled preview and nowhere else: never laid on a plate,
+   * never exported, never counted in the size or volume. For things that are
+   * not printed -- the metal keyring a keychain hangs from -- but that the
+   * user wants to see it with.
+   */
+  readonly previewOnly?: boolean;
   readonly quantity?: number;
   /**
    * Parts sharing a group are ONE printed object made of several coloured

@@ -35,17 +35,22 @@ export function assembledToBufferGeometry(
   mesh: RawMesh,
   offset: readonly [number, number, number] = [0, 0, 0],
   pose?: readonly number[],
+  /** A last shift after the pose, for the exploded view. */
+  after?: readonly [number, number, number],
 ): BufferGeometry {
   let xyz: Float32Array = new Float32Array(deinterleave(mesh));
-  const [dx, dy, dz] = [offset[0] ?? 0, offset[1] ?? 0, offset[2] ?? 0];
-  if (dx !== 0 || dy !== 0 || dz !== 0) {
+  const shift = (v: readonly number[]) => {
+    const [dx, dy, dz] = [v[0] ?? 0, v[1] ?? 0, v[2] ?? 0];
+    if (dx === 0 && dy === 0 && dz === 0) return;
     for (let i = 0; i < xyz.length; i += 3) {
       xyz[i] = (xyz[i] ?? 0) + dx;
       xyz[i + 1] = (xyz[i + 1] ?? 0) + dy;
       xyz[i + 2] = (xyz[i + 2] ?? 0) + dz;
     }
-  }
+  };
+  shift(offset);
   if (pose) xyz = transformPoints(xyz, pose);
+  if (after) shift(after);
   const g = new BufferGeometry();
   g.setAttribute('position', new BufferAttribute(xyz, 3));
   g.setIndex(new BufferAttribute(mesh.index, 1));

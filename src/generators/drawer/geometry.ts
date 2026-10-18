@@ -4,13 +4,6 @@ import type { Params } from '../../core/params/types';
 export const STACK_CLEAR = 0.25;
 /** Thickness of the label tab's front edge, above its sloped underside. */
 export const LABEL_T = 1.2;
-/** Clearance between a bin and its pocket in the tray, per side. */
-export const POCKET_CLEAR = 0.25;
-/** Thinnest the tray's outer rim and the ribs between pockets may get. */
-export const TRAY_RIM = 2;
-export const TRAY_RIB = 1.2;
-/** How far a jigsaw knob reaches past the cut it crosses. */
-export const KNOB_REACH = 7.5;
 
 /** One bin in the grid: the cell it starts at, and how many cells it spans. */
 export interface BinCell {
@@ -94,13 +87,14 @@ export interface Derived {
   readonly cols: number;
   readonly rows: number;
   readonly layout: Layout;
-  /** Gap between neighbouring bins. With a tray, at least room for a rib. */
+  /** Gap between neighbouring bins. */
   readonly gap: number;
   /** One grid cell. A bin spanning cells covers the gaps between them too. */
   readonly cellW: number;
   readonly cellD: number;
-  /** Margin from the tray's edge to the outermost bins. Zero without a tray. */
-  readonly margin: number;
+  /** The whole set of bins: the drawer less the fit gap. */
+  readonly setW: number;
+  readonly setD: number;
 
   readonly binH: number;
   readonly corner: number;
@@ -123,20 +117,17 @@ export interface Derived {
   readonly scoop: boolean;
   readonly scoopRadius: number;
 
-  // --- tray
-  readonly tray: boolean;
-  readonly trayW: number;
-  readonly trayD: number;
-  readonly trayBase: number;
-  /** Height of the pocket walls above the tray's base. */
-  readonly trayWall: number;
-  /** Where the bins' bottoms sit: on the tray's base, or on the drawer floor. */
-  readonly binZ: number;
-  readonly jointClear: number;
-  /** Cut positions across the tray, outer edges included. */
-  readonly cutsX: readonly number[];
-  readonly cutsY: readonly number[];
-  readonly splitError: string | null;
+  // --- connectors
+  /** Clips joining neighbouring bins, dropped in over their rims. */
+  readonly connectors: boolean;
+  /** Width of a clip along the edge it bridges. */
+  readonly clipW: number;
+  /** Thickness of a clip's bar and legs. */
+  readonly clipT: number;
+  /** How far a clip's legs hang down inside the bins. */
+  readonly clipLeg: number;
+  /** Gap round a clip in its notches. */
+  readonly clipClear: number;
 
   readonly bedX: number;
   readonly bedY: number;
@@ -153,8 +144,8 @@ export function binSize(d: Derived, b: { w: number; h: number }): BinSize {
 
 /** Centre of a bin in the drawer, with the drawer's centre at 0,0. Row 0 is the front. */
 export function binCentre(d: Derived, b: BinCell): [number, number] {
-  const left = -d.trayW / 2 + d.margin;
-  const front = -d.trayD / 2 + d.margin;
+  const left = -d.setW / 2;
+  const front = -d.setD / 2;
   const s = binSize(d, b);
   return [
     left + b.col * (d.cellW + d.gap) + s.w / 2,
@@ -177,51 +168,24 @@ export function derive(p: Params): Derived {
   const lipH = stackable ? Number(p.lipHeight) : 0;
   const footInset = wall + STACK_CLEAR;
 
-  const tray = p.tray === true;
-  // The bins' footprint where they meet the tray: a stacking bin stands on
-  // its stepped-in foot, so its pocket -- and the ribs between pockets -- are
-  // that much further in.
-  const footStep = stackable ? footInset : 0;
-  const margin = tray ? Math.max(0, TRAY_RIM + POCKET_CLEAR - footStep) : 0;
-  const gap = tray
-    ? Math.max(Number(p.binGap), TRAY_RIB + 2 * POCKET_CLEAR - 2 * footStep)
-    : Number(p.binGap);
+  const gap = Number(p.binGap);
 
   // The fit gap comes off the whole set, then the bins share what is left.
-  const trayW = drawerW - fit;
-  const trayD = drawerD - fit;
-  const cellW = (trayW - 2 * margin - (cols - 1) * gap) / cols;
-  const cellD = (trayD - 2 * margin - (rows - 1) * gap) / rows;
+  const setW = drawerW - fit;
+  const setD = drawerD - fit;
+  const cellW = (setW - (cols - 1) * gap) / cols;
+  const cellD = (setD - (rows - 1) * gap) / rows;
 
-  const trayBase = tray ? Number(p.trayBase) : 0;
-  // A stacking bin's walls slope out just above its foot, so a pocket wall
-  // taller than the foot would catch that slope and hold the bin up.
-  const trayWall = tray ? (stackable ? Math.min(Number(p.trayWall), lipH) : Number(p.trayWall)) : 0;
-  const binZ = trayBase;
-  const binH = drawerH - Number(p.headroom) - trayBase;
+  const binH = drawerH - Number(p.headroom);
   const corner = Math.max(0, Math.min(Number(p.corner), Math.min(cellW, cellD) / 2 - 0.5));
 
   const labelTop = binH - (stackable ? lipH + 0.5 : 0.8);
   const bedX = Number(p.bedX);
   const bedY = Number(p.bedY);
 
-  // --- where the tray is cut so each piece fits the bed
-  const spansX = layout.bins.filter((b) => b.w > 1).map((b) => [b.col, b.col + b.w] as const);
-  const spansY = layout.bins.filter((b) => b.h > 1).map((b) => [b.row, b.row + b.h] as const);
-  const sx = tray
-    ? splitAxis(trayW, margin, cellW, gap, cols, bedX - KNOB_REACH - 1, spansX)
-    : { cuts: [-trayW / 2, trayW / 2], ok: true };
-  const sy = tray
-    ? splitAxis(trayD, margin, cellD, gap, rows, bedY - KNOB_REACH - 1, spansY)
-    : { cuts: [-trayD / 2, trayD / 2], ok: true };
-  const splitError =
-    sx.ok && sy.ok
-      ? null
-      : `A single ${sx.ok ? 'row' : 'column'} of the tray is wider than your bed can take in one piece. Use more ${sx.ok ? 'rows' : 'columns'}, or turn the tray off.`;
-
   return {
     drawerW, drawerD, drawerH,
-    cols, rows, layout, gap, cellW, cellD, margin,
+    cols, rows, layout, gap, cellW, cellD, setW, setD,
     binH, corner, wall, floor,
     stackable, lipH, footInset,
     labelTab: p.labelTab === true,
@@ -229,66 +193,13 @@ export function derive(p: Params): Derived {
     labelTop,
     scoop: p.scoop === true,
     scoopRadius: Number(p.scoopRadius),
-    tray, trayW, trayD, trayBase, trayWall, binZ,
-    jointClear: Number(p.jointClearance),
-    cutsX: sx.cuts,
-    cutsY: sy.cuts,
-    splitError,
+    connectors: p.connectors === true,
+    clipW: Number(p.clipWidth ?? 8),
+    clipT: Number(p.clipThickness ?? 2),
+    clipLeg: Number(p.clipLeg ?? 6),
+    clipClear: Number(p.clipClearance ?? 0.2),
     bedX, bedY,
   };
-}
-
-/**
- * Where to cut one axis of the tray.
- *
- * Cuts only ever fall in the gap between two columns (or rows), down the
- * middle of a rib, where the tray is full height and a joint has something to
- * grip. Gaps that a merged bin spans are avoided when possible -- a cut there
- * runs under the bin through nothing but floor. The pieces are kept as even
- * as the gaps allow, rather than filling the bed and leaving a sliver at the end.
- */
-function splitAxis(
-  length: number,
-  margin: number,
-  cell: number,
-  gap: number,
-  n: number,
-  maxPiece: number,
-  spans: readonly (readonly [number, number])[],
-): { cuts: number[]; ok: boolean } {
-  const start = -length / 2;
-  const end = length / 2;
-  if (length <= maxPiece) return { cuts: [start, end], ok: true };
-
-  const gaps: { at: number; crossed: boolean }[] = [];
-  for (let k = 1; k < n; k++) {
-    gaps.push({
-      at: start + margin + k * cell + (k - 0.5) * gap,
-      crossed: spans.some(([a, b]) => a < k && k < b),
-    });
-  }
-
-  const pieces = Math.ceil(length / maxPiece);
-  const cuts = [start];
-  for (let k = 1; k < pieces; k++) {
-    const prev = cuts[cuts.length - 1]!;
-    const target = start + (k * length) / pieces;
-    const reachable = gaps.filter((g) => g.at > prev + 1 && g.at - prev <= maxPiece);
-    if (reachable.length === 0) return { cuts: [start, end], ok: false };
-    const score = (g: { at: number; crossed: boolean }) =>
-      Math.abs(g.at - target) + (g.crossed ? length : 0);
-    cuts.push(reachable.reduce((best, g) => (score(g) < score(best) ? g : best)).at);
-  }
-  // The even split can still leave the last piece too long; keep cutting.
-  while (end - cuts[cuts.length - 1]! > maxPiece) {
-    const prev = cuts[cuts.length - 1]!;
-    const reachable = gaps.filter((g) => g.at > prev + 1 && g.at - prev <= maxPiece);
-    if (reachable.length === 0) return { cuts: [start, end], ok: false };
-    const best = reachable.filter((g) => !g.crossed);
-    cuts.push((best.length > 0 ? best : reachable).reduce((a, b) => (b.at > a.at ? b : a)).at);
-  }
-  cuts.push(end);
-  return { cuts, ok: true };
 }
 
 /**

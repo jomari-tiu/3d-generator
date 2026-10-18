@@ -3,7 +3,7 @@ import type { ManifoldToplevel } from 'manifold-3d';
 import { cleanup, kernel } from './kernel';
 import { drawerOrganizerGenerator as gen } from '../src/generators/drawer/build';
 import {
-  binCentre, binSize, derive, parseLayout, KNOB_REACH, STACK_CLEAR,
+  binCentre, binSize, derive, parseLayout, STACK_CLEAR,
 } from '../src/generators/drawer/geometry';
 import { coerceAll, defaultsOf } from '../src/core/params/validate';
 import type { BuildCtx, Params } from '../src/core/params/types';
@@ -65,7 +65,7 @@ describe('drawer organizer bins', () => {
   it('fills the drawer with one-piece bins, merged ones covering the gaps they span', async () => {
     const m = await kernel();
     try {
-      const p = paramsWith({ tray: false });
+      const p = paramsWith({ connectors: false });
       const d = derive(p);
       const result = gen.build(p, ctxFor(m));
       expect(result.issues.filter((i) => i.level === 'error')).toEqual([]);
@@ -100,7 +100,7 @@ describe('drawer organizer bins', () => {
   it('steps the foot in so one bin drops into the top of another', async () => {
     const m = await kernel();
     try {
-      const p = paramsWith({ tray: false, layout: '', labelTab: false, scoop: false });
+      const p = paramsWith({ layout: '', labelTab: false, scoop: false });
       const d = derive(p);
       const bin = solidOf(m, firstBin(gen.build(p, ctxFor(m)).parts).mesh);
 
@@ -111,7 +111,7 @@ describe('drawer organizer bins', () => {
       expect(openingW - footW).toBeCloseTo(2 * STACK_CLEAR, 1);
 
       // And without the lip the walls go straight down.
-      const plain = solidOf(m, firstBin(gen.build(paramsWith({ tray: false, layout: '', stackable: false }), ctxFor(m)).parts).mesh);
+      const plain = solidOf(m, firstBin(gen.build(paramsWith({ layout: '', stackable: false }), ctxFor(m)).parts).mesh);
       const flat = plain.slice(0.5).bounds();
       expect(flat.max[0] - flat.min[0]).toBeCloseTo(d.cellW, 1);
     } finally {
@@ -122,7 +122,7 @@ describe('drawer organizer bins', () => {
   it('adds a label tab at the back and a scoop at the front', async () => {
     const m = await kernel();
     try {
-      const p = paramsWith({ tray: false, layout: '' });
+      const p = paramsWith({ layout: '' });
       const d = derive(p);
       const bin = solidOf(m, firstBin(gen.build(p, ctxFor(m)).parts).mesh);
       const back = d.cellD / 2 - d.wall;
@@ -130,95 +130,78 @@ describe('drawer organizer bins', () => {
       const labelD = d.labelDepth;
 
       // Tab: solid just under its top face, out from the back wall...
-      expect(fill(m, bin, 0, back - labelD / 2, d.labelTop - 0.4)).toBeCloseTo(1, 2);
+      // Probed off the middle of the wall, where a connector clip's slot is cut.
+      expect(fill(m, bin, d.cellW * 0.3, back - labelD / 2, d.labelTop - 0.4)).toBeCloseTo(1, 2);
       // ...and the opening above it is clear, for a stacked bin's foot.
-      expect(fill(m, bin, 0, back - labelD / 2, d.labelTop + 0.4)).toBeCloseTo(0, 2);
+      expect(fill(m, bin, d.cellW * 0.3, back - labelD / 2, d.labelTop + 0.4)).toBeCloseTo(0, 2);
 
       // Scoop: the floor-to-wall corner is filled, the middle of the bin is not.
       // Probed past the stepped-in foot, whose wall stands further in.
       expect(fill(m, bin, 0, front + 2.5, d.floor + 1)).toBeCloseTo(1, 2);
       expect(fill(m, bin, 0, 0, d.floor + 1)).toBeCloseTo(0, 2);
 
-      const bare = solidOf(m, firstBin(gen.build(paramsWith({ tray: false, layout: '', labelTab: false, scoop: false }), ctxFor(m)).parts).mesh);
+      const bare = solidOf(m, firstBin(gen.build(paramsWith({ layout: '', labelTab: false, scoop: false }), ctxFor(m)).parts).mesh);
       expect(fill(m, bare, 0, front + 2.5, d.floor + 1)).toBeCloseTo(0, 2);
-      expect(fill(m, bare, 0, back - labelD / 2, d.labelTop - 0.4)).toBeCloseTo(0, 2);
+      expect(fill(m, bare, d.cellW * 0.3, back - labelD / 2, d.labelTop - 0.4)).toBeCloseTo(0, 2);
     } finally {
       cleanup();
     }
   });
 });
 
-describe('drawer organizer tray', () => {
-  it('cuts a tray bigger than the bed into pieces that each fit it', async () => {
+describe('drawer organizer connectors', () => {
+  it('clips every pair of neighbouring bins, and nothing else', async () => {
     const m = await kernel();
     try {
-      const p = paramsWith();
-      const d = derive(p);
+      // "2,1" on 3 x 4: the double's inner edge needs no clip.
+      const p = paramsWith({ layout: '2,1' });
       const result = gen.build(p, ctxFor(m));
       expect(result.issues.filter((i) => i.level === 'error')).toEqual([]);
-
-      const trays = result.parts.filter((x) => x.id.startsWith('tray-'));
-      // 298 x 398 on a 256 bed: two pieces each way.
-      expect(trays.length).toBe(4);
-      for (const t of trays) {
-        const b = t.mesh.bbox;
-        expect(b.max[0] - b.min[0], t.name).toBeLessThanOrEqual(d.bedX);
-        expect(b.max[1] - b.min[1], t.name).toBeLessThanOrEqual(d.bedY);
-        expect(solidOf(m, t.mesh).decompose().length, `${t.name} in one piece`).toBe(1);
-      }
-
-      // Cuts fall down the middle of a rib, between two columns.
-      const cut = d.cutsX[1]!;
-      const gapCentres = [1, 2].map((k) => -d.trayW / 2 + d.margin + k * d.cellW + (k - 0.5) * d.gap);
-      expect(gapCentres.some((g) => Math.abs(g - cut) < 1e-6)).toBe(true);
-
-      // The low piece reaches past the cut with its knobs, the high one has
-      // sockets for them: together they never overlap.
-      const a = solidOf(m, trays.find((x) => x.id === 'tray-0-0')!.mesh);
-      const b = solidOf(m, trays.find((x) => x.id === 'tray-1-0')!.mesh);
-      expect(a.boundingBox().max[0]).toBeGreaterThan(cut + KNOB_REACH - 1);
-      expect(b.boundingBox().min[0]).toBeGreaterThan(cut - 0.01);
-      expect(a.intersect(b).volume()).toBeLessThan(1e-6);
+      const clips = result.parts.filter((x) => x.id.startsWith('clip-'));
+      // 3 x 4 grid: 2 x 4 edges between columns + 3 x 3 between rows = 17, less the double's one.
+      expect(clips.length).toBe(16);
+      expect(result.readouts?.Connectors).toBe('16 clips');
+      expect(result.parts.some((x) => x.id.startsWith('tray'))).toBe(false);
+      for (const c of clips) expect(c.orientation).toEqual([180, 0, 0]);
+      expect(solidOf(m, clips[0]!.mesh).decompose().length).toBe(1);
     } finally {
       cleanup();
     }
   });
 
-  it('has a pocket under every bin, and the bins stand on the tray base', async () => {
+  it('sits in its notches clear of both bins, and holds them together', async () => {
     const m = await kernel();
     try {
-      const p = paramsWith({ bedX: 400, bedY: 450 });
-      const d = derive(p);
+      const p = paramsWith({ layout: '', columns: 2, rows: 1, drawerWidth: 200, drawerDepth: 120 });
       const result = gen.build(p, ctxFor(m));
-      const trays = result.parts.filter((x) => x.id.startsWith('tray-'));
-      expect(trays.length).toBe(1);
-      const tray = solidOf(m, trays[0]!.mesh);
-      expect(tray.boundingBox().max[0] - tray.boundingBox().min[0]).toBeCloseTo(d.trayW, 1);
-
-      for (const b of d.layout.bins) {
-        const [x, y] = binCentre(d, b);
-        expect(fill(m, tray, x, y, d.trayBase / 2), `base under ${b.col},${b.row}`).toBeCloseTo(1, 2);
-        expect(fill(m, tray, x, y, d.trayBase + 0.5), `pocket at ${b.col},${b.row}`).toBeCloseTo(0, 2);
-        // The pocket wall stands just outside the bin's foot.
-        const s = binSize(d, b);
-        const edge = x + s.w / 2 - d.footInset + 0.25 + 0.4;
-        expect(fill(m, tray, edge, y, d.trayBase + 0.5), `wall at ${b.col},${b.row}`).toBeCloseTo(1, 2);
-      }
-      for (const bin of result.parts.filter((x) => x.id.startsWith('bin-'))) {
-        expect(bin.assembly![2]).toBe(d.trayBase);
-      }
-      expect(d.binH).toBe(d.drawerH - Number(p.headroom) - d.trayBase);
+      expect(result.issues.filter((i) => i.level === 'error')).toEqual([]);
+      const place = (part: (typeof result.parts)[number]) => solidOf(m, part.mesh).translate(part.assembly as [number, number, number]);
+      const [a, b] = ['bin-0-0', 'bin-0-1'].map((id) => place(result.parts.find((x) => x.id === id)!));
+      const clips = result.parts.filter((x) => x.id.startsWith('clip-'));
+      expect(clips.length).toBe(1);
+      const clip = place(clips[0]!);
+      // Clear as assembled: it drops in and lifts out.
+      expect(clip.intersect(a!).volume()).toBeLessThan(1e-3);
+      expect(clip.intersect(b!).volume()).toBeLessThan(1e-3);
+      // Caught: pull either bin away from the other and it runs into the clip...
+      expect(a!.translate([-1, 0, 0]).intersect(clip).volume()).toBeGreaterThan(0.05);
+      expect(b!.translate([1, 0, 0]).intersect(clip).volume()).toBeGreaterThan(0.05);
+      // ...and the clip cannot slide along the edge out of its notches.
+      expect(clip.translate([0, 1, 0]).intersect(a!).volume()).toBeGreaterThan(0.05);
     } finally {
       cleanup();
     }
   });
 
-  it('keeps cuts out from under a merged bin when it can', () => {
-    // A double across columns 1-2 of three: the only clean cut is between 2 and 3.
-    const d = derive(paramsWith({ drawerWidth: 300, columns: 3, layout: '2,1\n2,1\n2,1\n2,1' }));
-    expect(d.cutsX.length).toBe(3);
-    const gap2 = -d.trayW / 2 + d.margin + 2 * d.cellW + 1.5 * d.gap;
-    expect(d.cutsX[1]).toBeCloseTo(gap2, 6);
+  it('can be turned off, leaving plain rims', async () => {
+    const m = await kernel();
+    try {
+      const result = gen.build(paramsWith({ connectors: false }), ctxFor(m));
+      expect(result.parts.some((x) => x.id.startsWith('clip-'))).toBe(false);
+      expect(result.readouts?.Connectors).toBeUndefined();
+    } finally {
+      cleanup();
+    }
   });
 });
 

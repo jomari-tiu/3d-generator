@@ -21,7 +21,10 @@ export async function decodeImageFile(file: File, maxDim: number): Promise<Bitma
   const sh = source.height;
   if (!(sw > 0) || !(sh > 0)) throw new Error('That file did not decode to an image.');
 
-  const scale = Math.min(1, maxDim / Math.max(sw, sh));
+  // A vector has no pixels to lose, so it is drawn at the full budget: an icon
+  // SVG saying width="24" would otherwise trace as a 24-pixel blur.
+  const isVector = file.type === 'image/svg+xml';
+  const scale = isVector ? maxDim / Math.max(sw, sh) : Math.min(1, maxDim / Math.max(sw, sh));
   const w = Math.max(1, Math.round(sw * scale));
   const h = Math.max(1, Math.round(sh * scale));
 

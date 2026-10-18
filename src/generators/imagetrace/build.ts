@@ -1,13 +1,11 @@
 import type { CrossSection, Manifold } from 'manifold-3d';
 import { dropSlivers, roundedRect, segmentsForRadius } from '../../core/kernel/primitives';
 import { serialize } from '../../core/kernel/serialize';
-import { EmptyTraceError, sectionFromRings } from '../../core/image/section';
 import { transformCommands } from '../../core/image/simplify';
 import { ringsToSvg } from '../../core/image/svg';
-import { traceBitmap } from '../../core/image/trace';
-import type { MaskSource, DiagonalPolicy } from '../../core/image/types';
 import type { BuildCtx, BuildResult, Generator, Issue, Params, Part } from '../../core/params/types';
 import { hasThinStrokes } from '../../core/text/textSolid';
+import { floodedIssue, traceArtwork } from '../shared/artwork';
 import { imageTraceGroups, imageTraceParams } from './schema';
 
 /** Plate left around a hole, and the floor on a hanging lug's wall. */
@@ -129,85 +127,12 @@ function build(p: Params, ctx: BuildCtx): BuildResult {
   const { m } = ctx;
   const issues: Issue[] = [];
 
-  const id = String(p.image ?? '');
-  const bmp = ctx.image(id);
-  if (!bmp) {
-    return {
-      parts: [],
-      issues: [
-        {
-          level: 'error',
-          message:
-            id.length > 0
-              ? 'That picture is not on this device. Images stay on the machine they were dropped into, so a shared link brings the settings but not the artwork - drop the file in again.'
-              : 'Drop a picture in to trace.',
-          paramIds: ['image'],
-        },
-      ],
-    };
-  }
-
-  // ------------------------------------------------------------------ trace
-  const trace = traceBitmap(bmp, {
-    source: String(p.source) as MaskSource,
-    threshold: Number(p.threshold),
-    invert: p.invert === true,
-    despeckle: Number(p.despeckle),
-    diagonal: String(p.diagonal) as DiagonalPolicy,
-    detail: Number(p.detail),
-    smooth: Number(p.smooth) / 100,
-    cornerAngle: Number(p.cornerAngle),
-  });
-
-  if (!trace.bounds) {
-    return {
-      parts: [],
-      issues: [
-        {
-          level: 'error',
-          message:
-            'Nothing came through at this threshold - the whole picture read as blank paper. Move the threshold, or turn Invert on if the artwork is light on a dark background.',
-          paramIds: ['threshold', 'invert', 'source'],
-        },
-      ],
-    };
-  }
-
-  const pxW = trace.bounds.max[0] - trace.bounds.min[0];
-  const pxH = trace.bounds.max[1] - trace.bounds.min[1];
-  if (!(pxW > 0) || !(pxH > 0)) {
-    return {
-      parts: [],
-      issues: [
-        { level: 'error', message: 'That traced to a single line with no area.', paramIds: ['threshold'] },
-      ],
-    };
-  }
-
   const width = Number(p.width);
-  const mmPerPixel =
-    String(p.fitMode) === 'box' ? Math.min(width / pxW, Number(p.height) / pxH) : width / pxW;
-
-  let art: CrossSection;
-  try {
-    art = sectionFromRings(m, trace.rings, { mmPerPixel, tolerance: ctx.tolerance });
-  } catch (err) {
-    // Rings with area in pixels can still flatten to nothing once they are
-    // scaled into millimetres and cleaned at the build tolerance. That is a
-    // thing to explain, not a crash to hand to the runner.
-    if (!(err instanceof EmptyTraceError)) throw err;
-    return {
-      parts: [],
-      issues: [
-        {
-          level: 'error',
-          message:
-            'What came through is too fine to survive at this size. Make the artwork bigger, or raise Despeckle to drop the specks.',
-          paramIds: ['width', 'despeckle', 'threshold'],
-        },
-      ],
-    };
-  }
+  const traced = traceArtwork(p, ctx, (pxW, pxH) =>
+    String(p.fitMode) === 'box' ? Math.min(width / pxW, Number(p.height) / pxH) : width / pxW,
+  );
+  if ('issues' in traced) return { parts: [], issues: [...traced.issues] };
+  const { bmp, trace, art, mmPerPixel, pxW, pxH } = traced.artwork;
   const ab = art.bounds();
   const artW = ab.max[0] - ab.min[0];
   const artH = ab.max[1] - ab.min[1];
@@ -259,14 +184,8 @@ function build(p: Params, ctx: BuildCtx): BuildResult {
       paramIds: ['style'],
     });
   }
-  if (trace.inkFraction > 0.92) {
-    issues.push({
-      level: 'warn',
-      message:
-        'Almost the whole picture is reading as ink, so this is tracing as little more than a rectangle. Move the threshold down, or turn Invert off.',
-      paramIds: ['threshold', 'invert', 'source'],
-    });
-  }
+  const flooded = floodedIssue(trace);
+  if (flooded) issues.push(flooded);
   if (trace.ringCount > 250) {
     issues.push({
       level: 'warn',

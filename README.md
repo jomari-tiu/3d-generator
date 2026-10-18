@@ -390,6 +390,18 @@ joint or comes off the plate in more than one body.
 are separate coloured bodies of one object in one group, so a filament change at each step height
 gives two or three colours off a single extruder.
 
+**Initial: a name across a big letter.** One fat-serif capital (Ultra by default) with the name
+in a script standing up across its face — the initial is the name's own first letter unless you
+give another. The name is free to run off the letter's edges, and that decides how it is built:
+set *on* the initial, everything past the edge would be an overhang over thin air, so instead the
+name is extruded from the bed and has the initial cut out of it. Past the edge it is a solid column
+of its own colour; across the letter it simply stands taller. One flat print, no supports, and a
+filament change at the top of the initial colours exactly the name. The overlap between the two is
+what holds it together, so the same piece count applies — slide the name off the letter and the
+build refuses it. A dot out past the edge has nothing under it and is tied to its stem; a dot over
+the letter sits on it. The eye can hang off the **top-left corner**, the tab such a letter is
+usually hung from. The small text sits across the middle, flush along the top, or along the foot, with nudges and a tilt on top of that; it and the big letter each take their own font and height.
+
 ### Key clicker: read this before printing
 
 A row of keycaps on a bar, with a keyring loop. Five kinds of part: the **body**, a **bottom

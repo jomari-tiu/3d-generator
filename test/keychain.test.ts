@@ -388,6 +388,102 @@ describe('lettering keychain', () => {
     }
   });
 
+  it('cuts a tag stencil-style, every enclosed middle held in by a bridge', async () => {
+    const m = await kernel();
+    try {
+      const base = { style: 'tag', font: 'inter-bold', direction: 'vertical', fontSize: 22, thickness: 3, tagMargin: 6 };
+      for (const text of ['A', 'B', 'O', 'R', 'P', 'Q', 'D', '8']) {
+        for (const tagCut of ['through', 'engrave']) {
+          const r = keychainGenerator.build(paramsWith({ ...base, text, tagCut }), ctxFor(m));
+          expect(errorsOf(r), `${text} ${tagCut}`).toEqual([]);
+          expect(pieceCounts(r, m).tag, `${text} ${tagCut} fell apart`).toBe(1);
+        }
+      }
+      // A counter-free letter needs no bridge at all.
+      const l = keychainGenerator.build(paramsWith({ ...base, text: 'L', tagCut: 'through' }), ctxFor(m));
+      expect(l.readouts?.Cut).toBe('Through, 0 stencil bridges');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('stacks lines, fitted to one width, with the eye on top', async () => {
+    const m = await kernel();
+    try {
+      const r = keychainGenerator.build(
+        paramsWith({ style: 'outline', text: 'BEST\nMUMMY\nEVER', font: 'bebas-neue', fitLines: true, ring: 'top' }),
+        ctxFor(m),
+      );
+      expect(errorsOf(r)).toEqual([]);
+      expect(r.readouts?.Letters).toBe('13');
+      // Taller than wide once stacked, where one line would be a long strip.
+      const b = r.parts.find((q) => q.id === 'backing')!.mesh.bbox;
+      expect(b.max[1] - b.min[1]).toBeGreaterThan(b.max[0] - b.min[0]);
+      // Unfitted, MUMMY sticks out past BEST and EVER: wider overall.
+      const loose = keychainGenerator.build(
+        paramsWith({ style: 'outline', text: 'BEST\nMUMMY\nEVER', font: 'bebas-neue', fitLines: false, ring: 'top' }),
+        ctxFor(m),
+      );
+      const lb = loose.parts.find((q) => q.id === 'backing')!.mesh.bbox;
+      expect(lb.max[0] - lb.min[0]).toBeGreaterThan(b.max[0] - b.min[0] + 3);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('stands a name across an initial, in one piece and two colours', async () => {
+    const m = await kernel();
+    try {
+      for (const text of ['Amelia', 'Ryan', 'Mason', 'Sophia', 'Lily', 'James']) {
+        const r = keychainGenerator.build(
+          paramsWith({ style: 'initial', text, smallFont: 'pacifico', initialFont: 'ultra', weight: 0.3, ring: 'corner', ringGap: 0 }),
+          ctxFor(m),
+        );
+        expect(errorsOf(r), `${text} built with errors`).toEqual([]);
+        expect(r.readouts?.Initial).toBe(text[0]);
+        expect(r.readouts?.Pieces, `${text} came out loose`).toBe('One - it holds together');
+        expect(r.parts.map((p) => p.id)).toEqual(['initial', 'name']);
+      }
+      // Slid right off the letter, the name has nothing holding it on.
+      const off = keychainGenerator.build(
+        paramsWith({ style: 'initial', text: 'Ryan', initialFont: 'ultra', namePlace: 'top', nameY: 40, ring: 'none' }),
+        ctxFor(m),
+      );
+      expect(errorsOf(off).join(' ')).toMatch(/separate pieces/);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('takes any big letter, and puts the small text at its top, middle or foot', async () => {
+    const m = await kernel();
+    try {
+      const nameMidY = (place: string): number => {
+        const r = keychainGenerator.build(
+          paramsWith({ style: 'initial', text: 'Mia', initial: 'w', initialFont: 'roboto-slab-bold', smallSize: 10, namePlace: place, ring: 'none' }),
+          ctxFor(m),
+        );
+        expect(errorsOf(r), place).toEqual([]);
+        expect(r.readouts?.Initial).toBe('W');
+        const name = r.parts.find((p) => p.id === 'name')!;
+        let lo = Infinity;
+        let hi = -Infinity;
+        for (let i = 1; i < name.mesh.position.length; i += name.mesh.numProp) {
+          lo = Math.min(lo, name.mesh.position[i]!);
+          hi = Math.max(hi, name.mesh.position[i]!);
+        }
+        return (lo + hi) / 2;
+      };
+      const top = nameMidY('top');
+      const middle = nameMidY('middle');
+      const bottom = nameMidY('bottom');
+      expect(top).toBeGreaterThan(middle + 10);
+      expect(bottom).toBeLessThan(middle - 10);
+    } finally {
+      cleanup();
+    }
+  });
+
   it('builds every preset without errors', async () => {
     const m = await kernel();
     try {

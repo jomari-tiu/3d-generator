@@ -16,3 +16,6 @@ preview.svg
 Thumbs.db
 .vscode/
 .idea/
+
+# graphify: per-machine extraction cache (the graph itself is committed)
+graphify-out/cache/

@@ -39,6 +39,15 @@ const PLATE_GAP = 24;
 const LABEL_PX = 15;
 const DIM_COLOR = 0x8fb6ff;
 
+export type ViewName = 'iso' | 'front' | 'side' | 'top';
+
+const VIEW_DIRS: Record<ViewName, [number, number, number]> = {
+  iso: [0.62, -0.72, 0.55],
+  front: [0, -1, 0.0001],
+  side: [1, 0, 0.0001],
+  top: [0, -0.001, 1],
+};
+
 /** Z-up, millimetre-scale viewer with orbit / pan / zoom and on-demand rendering. */
 export class Viewer {
   readonly renderer: WebGLRenderer;
@@ -58,6 +67,7 @@ export class Viewer {
   private showDims = false;
   private bed: readonly [number, number] = [256, 256];
   private plateCount = 1;
+  private view: ViewName = 'iso';
 
   constructor(private readonly host: HTMLElement) {
     this.renderer = new WebGLRenderer({ antialias: true });
@@ -395,8 +405,15 @@ export class Viewer {
     this.dimRoot.add(lines);
   }
 
-  /** Frame the current model. */
-  fitView(): void {
+  /**
+   * Frame the current model, from the last direction asked for.
+   *
+   * Front looks along +y, the way every generator here faces its model: the
+   * front of the thing toward -y. Top is a hair off straight down, because
+   * the camera's up is +z and looking exactly along it leaves no "up" at all.
+   */
+  fitView(view?: ViewName): void {
+    if (view) this.view = view;
     const box = this.visibleBox();
     if (box.isEmpty()) return;
 
@@ -405,7 +422,7 @@ export class Viewer {
     const r = Math.max(sphere.radius, 1);
     const dist = (r / Math.sin((this.camera.fov * Math.PI) / 360)) * 1.25;
 
-    const dir = new Vector3(0.62, -0.72, 0.55).normalize();
+    const dir = new Vector3(...VIEW_DIRS[this.view]).normalize();
     this.camera.position.copy(center).addScaledVector(dir, dist);
     this.controls.target.copy(center);
     this.camera.near = Math.max(dist / 500, 0.05);

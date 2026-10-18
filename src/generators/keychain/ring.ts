@@ -29,6 +29,11 @@ export interface RingOpts {
   readonly gap: number;
   readonly direction: Direction;
   readonly atEnd: boolean;
+  /**
+   * Hang the eye off the top-left corner instead of an end -- the tab a big
+   * single initial is hung from. Overrides `direction` and `atEnd`.
+   */
+  readonly corner?: boolean;
 }
 
 export interface Ring {
@@ -91,7 +96,9 @@ export function buildRing(
   body: CrossSection,
   opts: RingOpts,
 ): Ring | null {
-  const angle = frameAngle(opts.direction, opts.atEnd);
+  // The top-left diagonal sits at 135 degrees; turning it a further 45 points
+  // it down -X like every other end.
+  const angle = opts.corner ? 45 : frameAngle(opts.direction, opts.atEnd);
   const local = body.rotate(angle);
   const b = local.bounds();
   const bodyW = b.max[0] - b.min[0];

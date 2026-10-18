@@ -12,6 +12,7 @@ import type {
   Generator,
   ParamValue,
   Params,
+  Part,
   VectorExport,
 } from '../core/params/types';
 import {
@@ -73,6 +74,11 @@ interface SavedPresets {
  */
 type SavedTemplates = SavedPresets;
 
+/** Everything that gets printed: all parts but the preview-only ones. */
+function printable(parts: readonly Part[]): Part[] {
+  return parts.filter((p) => !p.previewOnly);
+}
+
 export class App {
   private readonly viewer: Viewer;
   private readonly panel: Panel;
@@ -129,6 +135,19 @@ export class App {
   private exportBtns: HTMLButtonElement[] = [];
   private vectorRow: HTMLElement | null = null;
   private exportEnabled = false;
+  /** Pull the assembled parts apart along the directions the generator gave them. */
+  private exploded = false;
+  private explodeBtn!: HTMLButtonElement;
+  /**
+   * Settings as they stood before each committed change, for Undo; and what
+   * Undo stepped back over, for Redo. Per generator visit: switching model
+   * starts afresh, since the other model's settings are not what Undo means.
+   */
+  private undoStack: Params[] = [];
+  private redoStack: Params[] = [];
+  private committed: Params = {};
+  private undoBtn!: HTMLButtonElement;
+  private redoBtn!: HTMLButtonElement;
 
   constructor(
     private readonly sidebar: HTMLElement,
@@ -164,6 +183,7 @@ export class App {
     this.panel.setValues(this.values);
     this.renderFamilyTabs();
     this.refreshResetState();
+    this.resetHistory();
 
     // The picker sits over a fully laid-out editor rather than replacing it, so
     // opening a model is instant: the kernel is already warm and the first
@@ -199,6 +219,8 @@ export class App {
       this.values = coerceAll(gen, route.p ?? {});
       if (switching) this.reloadPanel();
       else this.panel.setValues(this.values);
+      if (switching) this.resetHistory();
+      else this.recordStep();
       this.refreshResetState();
       this.rebuild(true);
     }
@@ -210,6 +232,7 @@ export class App {
     this.gen = generatorById(id);
     this.values = this.recalledValues(this.gen);
     this.reloadPanel();
+    this.resetHistory();
     this.setView('editor');
     history.pushState(null, '', `#${encodeParams(this.gen, this.values)}`);
     this.rebuild(true);
@@ -250,6 +273,7 @@ export class App {
   private resetSettings(): void {
     if (changedFromDefaults(this.gen, this.values).length === 0) return;
     this.values = defaultsOf(this.gen);
+    this.recordStep();
     this.panel.setValues(this.values);
     history.pushState(null, '', `#${encodeParams(this.gen, this.values)}`);
     this.refreshResetState();
@@ -285,8 +309,10 @@ export class App {
     if (!sel) return;
     const matches = (patch: Params): boolean => {
       const v = coerceAll(this.gen, { ...defaultsOf(this.gen), ...patch });
+      // Pictures are skipped for the same reason applyPreset keeps them: no
+      // preset can name one, so the logo you dropped in is never a mismatch.
       return this.gen.params.every(
-        (s) => JSON.stringify(v[s.id]) === JSON.stringify(this.values[s.id]),
+        (s) => s.type === 'image' || JSON.stringify(v[s.id]) === JSON.stringify(this.values[s.id]),
       );
     };
     const builtin = (this.gen.presets ?? []).find((p) => matches(p.values));
@@ -380,6 +406,32 @@ export class App {
     shareRow.append(linkBtn, this.resetBtn);
     foot.appendChild(shareRow);
 
+    const historyRow = div('foot-row');
+    this.undoBtn = button('Undo', 'btn btn-sub');
+    this.undoBtn.title = 'Step back one change (Ctrl+Z)';
+    this.undoBtn.addEventListener('click', () => this.undo());
+    this.redoBtn = button('Redo', 'btn btn-sub');
+    this.redoBtn.title = 'Step forward again (Ctrl+Y)';
+    this.redoBtn.addEventListener('click', () => this.redo());
+    const saveFileBtn = button('Save .json', 'btn btn-sub');
+    saveFileBtn.title = 'Download these settings as a file, to load again later or share';
+    saveFileBtn.addEventListener('click', () => this.saveSettingsFile());
+    const openFileBtn = button('Open .json', 'btn btn-sub');
+    openFileBtn.title = 'Load settings from a file saved here';
+    openFileBtn.addEventListener('click', () => this.openSettingsFile());
+    historyRow.append(this.undoBtn, this.redoBtn, saveFileBtn, openFileBtn);
+    foot.appendChild(historyRow);
+    window.addEventListener('keydown', (e) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const k = e.key.toLowerCase();
+      if (k === 'z' && !e.shiftKey) this.undo();
+      else if (k === 'y' || (k === 'z' && e.shiftKey)) this.redo();
+      else return;
+      e.preventDefault();
+    });
+
     // What the exported FILE contains, which is not the same question as what
     // the preview shows. Explicit rather than tied to the Whole/Parts toggle:
     // looking at the assembled model and then clicking STL should not silently
@@ -461,6 +513,24 @@ export class App {
       this.viewer.setDimensions(on);
     });
     tools.append(fit, wire, dims);
+
+    const views = div('seg');
+    for (const [view, label] of [['iso', 'Iso'], ['front', 'Front'], ['side', 'Side'], ['top', 'Top']] as const) {
+      const b = button(label, 'btn btn-hud');
+      b.title = `Look at the model from the ${view === 'iso' ? 'front corner' : view}`;
+      b.addEventListener('click', () => this.viewer.fitView(view));
+      views.appendChild(b);
+    }
+    this.explodeBtn = button('Explode', 'btn btn-hud');
+    this.explodeBtn.title = 'Pull the assembled parts apart to show how they go together';
+    this.explodeBtn.hidden = true;
+    this.explodeBtn.addEventListener('click', () => {
+      this.exploded = !this.exploded;
+      this.explodeBtn.classList.toggle('active', this.exploded);
+      if (this.exploded && this.preview !== 'whole') this.setPreview('whole');
+      else this.refreshView(true);
+    });
+    tools.append(views, this.explodeBtn);
     this.viewportEl.appendChild(tools);
 
     this.partsPanel = div('hud hud-tr parts-panel');
@@ -474,6 +544,8 @@ export class App {
 
   private onParamChange(id: string, value: ParamValue, commit: boolean): void {
     this.values = coerceAll(this.gen, { ...this.values, [id]: value });
+    // A slider drag is one step, recorded when it lets go.
+    if (commit) this.recordStep();
     const spec = this.gen.params.find((p) => p.id === id);
     const debounce = commit ? 0 : (spec?.debounceMs ?? 0);
     this.rebuild(commit, debounce);
@@ -512,6 +584,7 @@ export class App {
       // after a reload, never its place on screen now.
       void this.imageStore.put(entry.id, bmp);
       this.values = coerceAll(this.gen, { ...this.values, [paramId]: entry.id });
+      this.recordStep();
       this.panel.setValues(this.values);
       this.rebuild(true);
       this.syncHash();
@@ -544,6 +617,7 @@ export class App {
     this.gen = generatorById(id);
     this.values = this.recalledValues(this.gen);
     this.reloadPanel();
+    this.resetHistory();
     this.rebuild(true);
     this.syncHash();
   }
@@ -610,6 +684,7 @@ export class App {
 
     this.panel.setIssues(result.issues);
     this.panel.setReadouts(result.readouts);
+    this.explodeBtn.hidden = !result.parts.some((p) => p.explode);
     // Independent of the 3D exports: the outline resolved cleanly even if the
     // model it was going to become has a problem, and the vector file is often
     // the whole point of having built it.
@@ -637,7 +712,7 @@ export class App {
     // about a big model, not a failure -- what used to happen here was that the
     // second bed's worth of parts was silently dropped from the preview and the
     // export, which is how a drawer came to be missing its drawer.
-    const set = packPlates(result.parts, bed, this.gen.plateGap);
+    const set = packPlates(printable(result.parts), bed, this.gen.plateGap);
     this.lastPlates = set;
     this.viewer.setBed(bed[0], bed[1], set.plates.length);
 
@@ -726,7 +801,7 @@ export class App {
         result.parts.map((part) => ({
           id: part.id,
           name: part.name,
-          geometry: assembledToBufferGeometry(part.mesh, part.assembly, part.pose),
+          geometry: assembledToBufferGeometry(part.mesh, part.assembly, part.pose, this.exploded ? part.explode : undefined),
           color: part.color,
           visible: shown(part.id),
         })),
@@ -780,11 +855,19 @@ export class App {
       name.addEventListener('click', () => this.setSolo(part.id));
       row.appendChild(name);
 
-      const dl = button('STL', 'btn btn-hud part-dl');
-      dl.title = `Download the ${part.name} on its own, laid out for printing`;
-      dl.disabled = !this.exportEnabled;
-      dl.addEventListener('click', () => this.exportPart(part.id));
-      row.appendChild(dl);
+      if (part.previewOnly) {
+        // Shown, not printed: nothing to download.
+        const tag = div('part-dl');
+        tag.textContent = 'preview';
+        tag.title = 'Shown in the preview only - not printed or exported';
+        row.appendChild(tag);
+      } else {
+        const dl = button('STL', 'btn btn-hud part-dl');
+        dl.title = `Download the ${part.name} on its own, laid out for printing`;
+        dl.disabled = !this.exportEnabled;
+        dl.addEventListener('click', () => this.exportPart(part.id));
+        row.appendChild(dl);
+      }
 
       this.partsPanel.appendChild(row);
     }
@@ -811,7 +894,7 @@ export class App {
     let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
     let tris = 0;
     let volume = 0;
-    for (const p of result.parts) {
+    for (const p of printable(result.parts)) {
       minX = Math.min(minX, p.mesh.bbox.min[0]);
       minY = Math.min(minY, p.mesh.bbox.min[1]);
       minZ = Math.min(minZ, p.mesh.bbox.min[2]);
@@ -906,8 +989,8 @@ export class App {
    */
   private exportParts(): readonly LaidOutPart[] | null {
     if (this.exportLayout === 'assembled') {
-      const parts = this.lastResult?.parts;
-      return parts && parts.length > 0 ? layAssembled(parts) : null;
+      const parts = printable(this.lastResult?.parts ?? []);
+      return parts.length > 0 ? layAssembled(parts) : null;
     }
     const parts = this.plateParts();
     return parts.length > 0 ? parts : null;
@@ -1096,7 +1179,13 @@ export class App {
   }
 
   private applyPreset(patch: Params): void {
-    this.values = coerceAll(this.gen, { ...defaultsOf(this.gen), ...patch });
+    // A preset replaces everything, text included -- except a picture. No
+    // preset can name one (images never leave this machine), so wiping it
+    // would only empty the generator under the user; the dropped-in logo stays.
+    const pictures: Params = {};
+    for (const spec of this.gen.params) if (spec.type === 'image') pictures[spec.id] = this.values[spec.id]!;
+    this.values = coerceAll(this.gen, { ...defaultsOf(this.gen), ...pictures, ...patch });
+    this.recordStep();
     this.panel.setValues(this.values);
     this.refreshResetState();
     this.rebuild(true);
@@ -1209,6 +1298,89 @@ export class App {
     store[this.gen.id] = mine;
     this.writeTemplates(store);
     this.refreshTemplateList();
+  }
+
+  // ----------------------------------------------------------------- history
+
+  /** Start a fresh history at the current settings. */
+  private resetHistory(): void {
+    this.undoStack = [];
+    this.redoStack = [];
+    this.committed = { ...this.values };
+    this.refreshHistoryButtons();
+  }
+
+  /** The settings just settled: what they were before is one Undo away. */
+  private recordStep(): void {
+    if (JSON.stringify(this.committed) === JSON.stringify(this.values)) return;
+    this.undoStack.push(this.committed);
+    if (this.undoStack.length > 200) this.undoStack.shift();
+    this.redoStack = [];
+    this.committed = { ...this.values };
+    this.refreshHistoryButtons();
+  }
+
+  private undo(): void {
+    const prev = this.undoStack.pop();
+    if (!prev) return;
+    this.redoStack.push({ ...this.values });
+    this.restore(prev);
+  }
+
+  private redo(): void {
+    const next = this.redoStack.pop();
+    if (!next) return;
+    this.undoStack.push({ ...this.values });
+    this.restore(next);
+  }
+
+  private restore(values: Params): void {
+    this.values = coerceAll(this.gen, values);
+    this.committed = { ...this.values };
+    this.panel.setValues(this.values);
+    this.refreshResetState();
+    this.refreshHistoryButtons();
+    this.rebuild(true);
+    this.syncHash();
+  }
+
+  private refreshHistoryButtons(): void {
+    if (!this.undoBtn) return;
+    this.undoBtn.disabled = this.undoStack.length === 0;
+    this.redoBtn.disabled = this.redoStack.length === 0;
+  }
+
+  // ----------------------------------------------------------- settings file
+
+  private saveSettingsFile(): void {
+    const body = JSON.stringify({ generator: this.gen.id, values: this.values }, null, 2);
+    download(new Blob([body], { type: 'application/json' }), `${this.baseName()}-settings.json`, 'application/json');
+  }
+
+  /**
+   * Load a file written by Save .json. A file for another model switches to
+   * that model; unknown keys are dropped and bad values coerced, the same as a
+   * permalink, so an old or hand-edited file still opens.
+   */
+  private openSettingsFile(): void {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'application/json,.json';
+    input.addEventListener('change', async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      try {
+        const data = JSON.parse(await file.text()) as { generator?: string; values?: Params };
+        if (!data || typeof data.values !== 'object') throw new Error('No settings in this file.');
+        const gen = data.generator ? findGenerator(data.generator) : this.gen;
+        if (!gen) throw new Error(`This file is for a model this app does not have ("${data.generator}").`);
+        if (gen.id !== this.gen.id) this.switchGenerator(gen.id);
+        this.applyPreset(data.values);
+      } catch (err) {
+        this.panel.setIssues([{ level: 'error', message: `Could not open ${file.name}: ${(err as Error).message ?? err}` }]);
+      }
+    });
+    input.click();
   }
 
   private savePreset(): void {

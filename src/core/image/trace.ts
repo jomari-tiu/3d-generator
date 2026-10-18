@@ -1,6 +1,6 @@
 import type { PathCommand, Vec2 } from '../text/flatten';
 import { ringAreaAbs, traceContours } from './contour';
-import { inkCount, toMask } from './mask';
+import { inkCount, looksLikeTile, removeTile, toMask } from './mask';
 import { ringToCommands, simplifyRing } from './simplify';
 import type { Bitmap, Mask, TraceOptions } from './types';
 
@@ -12,6 +12,8 @@ export interface TraceResult {
   readonly mask: Mask;
   readonly ringCount: number;
   readonly pointCount: number;
+  /** A dark tile behind the artwork was taken away, leaving the light logo it framed. */
+  readonly tileRemoved: boolean;
   /** Share of the image that came out as ink. 1 means the threshold flooded it. */
   readonly inkFraction: number;
 }
@@ -23,6 +25,14 @@ export const TRACE_DEFAULTS = {
   minArea: 4,
 } as const;
 
+/** The mask to trace, with a dark tile taken away when the options say to. */
+export function backgroundMask(bmp: Bitmap, opts: TraceOptions): { mask: Mask; tileRemoved: boolean } {
+  const mask = toMask(bmp, opts);
+  const bg = opts.background ?? 'keep';
+  const tileRemoved = bg === 'tile' || (bg === 'auto' && looksLikeTile(mask));
+  return { mask: tileRemoved ? removeTile(mask) : mask, tileRemoved };
+}
+
 /**
  * Bitmap -> smooth closed outlines.
  *
@@ -33,7 +43,7 @@ export const TRACE_DEFAULTS = {
  * locks them in, which is the failure mode every naive vectoriser has.
  */
 export function traceBitmap(bmp: Bitmap, opts: TraceOptions): TraceResult {
-  const mask = toMask(bmp, opts);
+  const { mask, tileRemoved } = backgroundMask(bmp, opts);
   const detail = opts.detail ?? TRACE_DEFAULTS.detail;
   const minArea = opts.minArea ?? TRACE_DEFAULTS.minArea;
   const smoothOpts = {
@@ -73,6 +83,7 @@ export function traceBitmap(bmp: Bitmap, opts: TraceOptions): TraceResult {
     rings,
     bounds: Number.isFinite(minX) ? { min: [minX, minY], max: [maxX, maxY] } : null,
     mask,
+    tileRemoved,
     ringCount: rings.length,
     pointCount: points,
     inkFraction: inkCount(mask) / Math.max(1, mask.w * mask.h),

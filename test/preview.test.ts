@@ -27,9 +27,10 @@ describe('assembled preview', () => {
       //
       // The exceptions build a part once at the origin and say where each copy
       // belongs: the clicker's keycaps, because that is the only sane frame to
-      // model a stem socket in, and the drawer's identical bins and the shelf's
-      // identical modules.
-      const placed = new Set(['keyclicker', 'drawer-organizer', 'shelf']);
+      // model a stem socket in, the drawer's identical bins, the shelf's
+      // identical modules, and the pegboard's clamps and accessories, each
+      // built once in its own frame and hung on its holes.
+      const placed = new Set(['keyclicker', 'drawer-organizer', 'shelf', 'pegboard']);
       for (const gen of GENERATORS.filter((g) => !placed.has(g.id))) {
         const result = gen.build(coerceAll(gen, defaultsOf(gen)), ctxFor(m));
         for (const part of result.parts) {

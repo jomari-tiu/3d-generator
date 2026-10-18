@@ -4,7 +4,7 @@ import type { ParamGroup, ParamSpec } from '../../core/params/types';
 export const drawerGroups: readonly ParamGroup[] = [
   { id: 'drawer', label: 'Your drawer', tab: 'Size' },
   { id: 'grid', label: 'Bins', tab: 'Size' },
-  { id: 'tray', label: 'Tray', tab: 'Size' },
+  { id: 'connect', label: 'Connectors', tab: 'Size' },
   { id: 'bin', label: 'Bin shape', tab: 'Bins' },
   { id: 'extras', label: 'Extras', tab: 'Bins' },
   { id: 'look', label: 'Colour', tab: 'Output' },
@@ -14,7 +14,7 @@ export const drawerGroups: readonly ParamGroup[] = [
 const stacks = (v: Record<string, unknown>) => v.stackable === true;
 const labelled = (v: Record<string, unknown>) => v.labelTab === true;
 const scooped = (v: Record<string, unknown>) => v.scoop === true;
-const trayed = (v: Record<string, unknown>) => v.tray === true;
+const joined = (v: Record<string, unknown>) => v.connectors === true;
 
 export const drawerParams: readonly ParamSpec[] = [
   // ----------------------------------------------------------------- drawer
@@ -86,41 +86,31 @@ export const drawerParams: readonly ParamSpec[] = [
     help: 'So neighbours lift out without dragging each other along.',
   }),
 
-  // ------------------------------------------------------------------- tray
-  bool('tray', 'Tray under the bins', {
-    group: 'tray',
+  // ------------------------------------------------------------- connectors
+  bool('connectors', 'Connector clips', {
+    group: 'connect',
     default: true,
-    help: 'A base that fills the drawer, with a pocket where each bin goes, so the bins stay put. Bigger than your bed, it is printed in pieces that lock together.',
+    help: 'Small clips that drop in over the rims of two neighbouring bins and hook inside both, so the set stays together as one. Lift a clip out and the bins come apart again - to stack, to wash, to rearrange.',
   }),
-  num('trayBase', 'Tray base', {
-    group: 'tray',
-    unit: 'mm',
-    min: 1,
-    max: 5,
-    step: 0.1,
-    default: 2,
-    visibleIf: trayed,
-    help: 'Thickness of the floor under the pockets. It comes off the height of the bins.',
+  num('clipWidth', 'Clip width', {
+    group: 'connect', unit: 'mm', min: 5, max: 16, step: 0.5, default: 8,
+    visibleIf: joined,
+    help: 'Along the edge it bridges. A notch this wide is cut into the rim of every bin, at the middle of each grid cell along each wall.',
   }),
-  num('trayWall', 'Pocket depth', {
-    group: 'tray',
-    unit: 'mm',
-    min: 1,
-    max: 15,
-    step: 0.5,
-    default: 4,
-    visibleIf: trayed,
-    help: 'How high the walls around each pocket stand. With the stacking lip on, kept no taller than the lip.',
+  num('clipThickness', 'Clip thickness', {
+    group: 'connect', unit: 'mm', min: 1.2, max: 4, step: 0.1, default: 2,
+    visibleIf: joined,
+    help: 'Of the bar across the rims and the legs inside the bins. The bar sits flush in the notches.',
   }),
-  num('jointClearance', 'Joint clearance', {
-    group: 'tray',
-    unit: 'mm',
-    min: 0,
-    max: 0.6,
-    step: 0.05,
-    default: 0.2,
-    visibleIf: trayed,
-    help: 'Gap around the jigsaw knobs that join the tray pieces. Raise it if they will not press together.',
+  num('clipLeg', 'Clip leg length', {
+    group: 'connect', unit: 'mm', min: 3, max: 20, step: 0.5, default: 6,
+    visibleIf: joined,
+    help: 'How far the legs hang down inside each bin. Longer grips harder.',
+  }),
+  num('clipClearance', 'Clip clearance', {
+    group: 'connect', unit: 'mm', min: 0, max: 0.6, step: 0.05, default: 0.2,
+    visibleIf: joined,
+    help: 'Gap round the clip in its notches and against the walls. Raise it if the clips will not drop in; lower it if they rattle.',
   }),
 
   // -------------------------------------------------------------------- bin
@@ -199,7 +189,7 @@ export const drawerParams: readonly ParamSpec[] = [
 
   // ------------------------------------------------------------------- look
   color('binColor', 'Bins', { group: 'look', default: '#7aa6c2' }),
-  color('trayColor', 'Tray', { group: 'look', default: '#4f7d99', visibleIf: trayed }),
+  color('connectorColor', 'Connector clips', { group: 'look', default: '#4f7d99', visibleIf: joined }),
 
   // ---------------------------------------------------------------- printer
   num('bedX', 'Bed width', {

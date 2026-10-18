@@ -52,7 +52,15 @@ export interface MaskOptions {
  */
 export type DiagonalPolicy = 'connect' | 'separate';
 
+/**
+ * What a dark shape enclosing the whole artwork is. 'keep' traces it as ink;
+ * 'tile' takes the light artwork knocked out of it instead; 'auto' decides
+ * with looksLikeTile.
+ */
+export type Background = 'keep' | 'tile' | 'auto';
+
 export interface TraceOptions extends MaskOptions {
+  readonly background?: Background;
   readonly diagonal?: DiagonalPolicy;
   /** Douglas-Peucker tolerance in PIXELS. Higher = fewer, longer segments. */
   readonly detail?: number;
