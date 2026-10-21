@@ -102,6 +102,19 @@ function validate(p: Params): Issue[] {
       paramIds: ['legendSize', 'capTaper'],
     });
   }
+  // Cut-in caps print upside down, standing on the top face, and the
+  // round-over takes that face away from the outside in.
+  const flat = d.capTopSize - 2 * d.capRound;
+  if (d.capRound > 0.05 && d.legendStyle !== 'raised' && flat < 6) {
+    issues.push({
+      level: 'warn',
+      message:
+        flat < 0.5
+          ? 'Rounded into a ball, the cap has no flat top left to stand on upside down, and it would print on a point. Use raised letters - they print the right way up - or round it less.'
+          : `Rounded over, the cap stands upside down on only ${flat.toFixed(1)} mm of flat top. It will rock and need a brim. Raised letters print the right way up instead.`,
+      paramIds: ['capRound', 'legendStyle'],
+    });
+  }
   if (d.legendStyle === 'inlay' && d.legendDepth < 3 * d.layer - 1e-6) {
     issues.push({
       level: 'warn',

@@ -372,34 +372,34 @@
     "semantic_hash": ""
   },
   "src/generators/keyclicker/build.ts": {
-    "mtime": 1792068110.952233,
-    "seen": 1792294430.243454,
-    "ast_hash": "2ff22f996488d6788e6e7164eba4426c",
-    "semantic_hash": "2ff22f996488d6788e6e7164eba4426c"
+    "mtime": 1792587357.2259133,
+    "seen": 1792587482.7308307,
+    "ast_hash": "af85a2c3511bb9f11d6cc619c8b840d6",
+    "semantic_hash": ""
   },
   "src/generators/keyclicker/geometry.ts": {
-    "mtime": 1792068141.9574008,
-    "seen": 1792294430.243454,
-    "ast_hash": "fbfcd2671fe60210483ec588e2322339",
-    "semantic_hash": "fbfcd2671fe60210483ec588e2322339"
+    "mtime": 1792587436.4518235,
+    "seen": 1792587482.7308307,
+    "ast_hash": "f24b1cd378e1d6f4c7951972ac091998",
+    "semantic_hash": ""
   },
   "src/generators/keyclicker/parts/base.ts": {
-    "mtime": 1792068141.9584014,
-    "seen": 1792294430.243454,
-    "ast_hash": "d4c25d873a96b18c64b93a4c5eca6e5d",
-    "semantic_hash": "d4c25d873a96b18c64b93a4c5eca6e5d"
+    "mtime": 1792587694.97541,
+    "seen": 1792587830.4252038,
+    "ast_hash": "2a9f357ccda987fe6f6eb692a9f7c0b2",
+    "semantic_hash": ""
   },
   "src/generators/keyclicker/parts/keycap.ts": {
-    "mtime": 1792068110.950729,
-    "seen": 1792294430.243454,
-    "ast_hash": "e5f3fa64bd2b249d970ff86850e2eb95",
-    "semantic_hash": "e5f3fa64bd2b249d970ff86850e2eb95"
+    "mtime": 1792587770.8528311,
+    "seen": 1792587830.4252038,
+    "ast_hash": "e43cd5422bc640ba67f050098fd54ded",
+    "semantic_hash": ""
   },
   "src/generators/keyclicker/schema.ts": {
-    "mtime": 1792068141.9449203,
-    "seen": 1792294430.243454,
-    "ast_hash": "48ae0418918d2acb35a695010cf3d165",
-    "semantic_hash": "48ae0418918d2acb35a695010cf3d165"
+    "mtime": 1792588508.6279812,
+    "seen": 1792588571.6844141,
+    "ast_hash": "abcad8e1a1087379e6bf43f6175a8aca",
+    "semantic_hash": ""
   },
   "src/generators/mscage/build.ts": {
     "mtime": 1792163753.684488,
@@ -630,10 +630,10 @@
     "semantic_hash": ""
   },
   "test/keyclicker.test.ts": {
-    "mtime": 1792068181.816736,
-    "seen": 1792294430.243454,
-    "ast_hash": "4c2b30dc8c003cf296e3e11b5d791ce9",
-    "semantic_hash": "4c2b30dc8c003cf296e3e11b5d791ce9"
+    "mtime": 1792588544.5066352,
+    "seen": 1792588571.6844141,
+    "ast_hash": "706ba2f1517e4492ca312a84af30795f",
+    "semantic_hash": ""
   },
   "test/mscage.test.ts": {
     "mtime": 1792163776.6833289,
@@ -897,6 +897,12 @@
     "mtime": 1792330543.735475,
     "seen": 1792330641.824992,
     "ast_hash": "b9be3a967d9f87574ec74f06b0dd7f58",
+    "semantic_hash": ""
+  },
+  "src/generators/keyclicker/parts/rounding.ts": {
+    "mtime": 1792587694.9744098,
+    "seen": 1792587830.4252038,
+    "ast_hash": "d6cdaa0fe5200425522ca9ec15f5749d",
     "semantic_hash": ""
   }
 }

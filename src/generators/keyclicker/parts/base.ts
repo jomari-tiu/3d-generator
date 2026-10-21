@@ -2,6 +2,7 @@ import type { CrossSection, Manifold } from 'manifold-3d';
 import type { BuildCtx } from '../../../core/params/types';
 import { roundedRect, segmentsForRadius, taperedExtrude } from '../../../core/kernel/primitives';
 import { keyX, type Derived } from '../geometry';
+import { insetSquare, roundedTop } from './rounding';
 
 /**
  * The body seen from above. A tray is one rounded bar; cells are a rounded
@@ -68,6 +69,15 @@ export function buildBase(ctx: BuildCtx, d: Derived): Manifold {
   if (d.baseStyle === 'cells') {
     const cells: Manifold[] = [];
     for (let i = 0; i < d.keys; i++) {
+      // Rounded over or chamfered, per cell either way: one convex block each,
+      // so where neighbours meet the round-overs still pinch in between them.
+      if (d.cellRound > 0.05) {
+        cells.push(
+          roundedTop(m, (_z, inset) => insetSquare(m, d.cell, d.cell, d.cellCorner, inset), d.baseH, d.cellRound)
+            .translate([keyX(d, i), 0, 0]),
+        );
+        continue;
+      }
       cells.push(
         chamferedBox(
           ctx,

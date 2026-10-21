@@ -3,6 +3,7 @@ import type { BuildCtx } from '../../../core/params/types';
 import { roundedRect, segmentsForRadius, taperedExtrude } from '../../../core/kernel/primitives';
 import { textOutline } from '../../../core/text/textSolid';
 import type { Derived } from '../geometry';
+import { insetSquare, roundedTop } from './rounding';
 
 /**
  * Standard stem dimensions. The MX cross is 4.0 x 1.17 mm arms, 4 mm deep, and
@@ -59,6 +60,7 @@ export function buildKeycap(
   legend: CrossSection | null,
 ): { cap: Manifold; insert: Manifold | null } {
   const { m } = ctx;
+  if (d.capRound > 0.05) return buildRoundedKeycap(ctx, d, legend);
 
   const outer = roundedRect(m, d.keySize, d.keySize, d.capCorner);
   const scaleTop = d.capTopSize / d.keySize;
@@ -192,6 +194,161 @@ export function buildKeycap(
           .subtract(m.Manifold.sphere(domeR - d.legendDepth, 128).translate([0, 0, domeZ]))
       : legend.extrude(d.legendDepth + 1).translate([0, 0, d.capH - d.legendDepth - d.dish]);
 
+  return {
+    cap: cap.subtract(cutter),
+    insert: d.legendStyle === 'inlay' ? cap.intersect(cutter) : null,
+  };
+}
+
+/**
+ * A keycap with its top edge rounded over, out to a ball at the limit.
+ *
+ * Its own path rather than a step bolted onto the square one, because the
+ * round-over moves the outside of the cap and three things hung off the old
+ * outside have to follow it:
+ *
+ *   - The hollow. A round-over big enough to matter cuts down past the roof,
+ *     and a hollow sized to the square cap would break out through the curve.
+ *     So the hollow is sized from the curved outside at every height: a wall in
+ *     from the side, and a roof's thickness down from the surface above it.
+ *   - The stem. It rises to the full cap height for its roof, and on a ball
+ *     the curve falls below that only a couple of millimetres out from the
+ *     middle -- the boss would stand out of the top as a cylinder. It is
+ *     trimmed to the outside.
+ *   - The legend. A flat-topped letter over a curve floats at one edge and is
+ *     buried at the other. Raised letters are the outside lifted by the legend
+ *     depth, cut-in ones the outside lowered by it, so both follow the surface
+ *     wherever they land on it.
+ */
+function buildRoundedKeycap(
+  ctx: BuildCtx,
+  d: Derived,
+  legend: CrossSection | null,
+): { cap: Manifold; insert: Manifold | null } {
+  const { m } = ctx;
+  const r = d.capRound;
+  const rz = d.capRoundZ;
+  const start = d.capH - rz;
+
+  // The tapered footprint at height z, before any round-over: the taper scales
+  // the whole rounded square, corner radius included.
+  const side = (z: number): number => d.keySize + ((d.capTopSize - d.keySize) * z) / d.capH;
+  const corner = (z: number): number => (d.capCorner * side(z)) / d.keySize;
+  const inset = (z: number): number => {
+    if (z <= start) return 0;
+    const v = Math.min(1, (z - start) / rz);
+    return r * (1 - Math.sqrt(1 - v * v));
+  };
+  /** Outside width at height z; 0 above the top. */
+  const width = (z: number): number => (z >= d.capH ? 0 : Math.max(0, side(z) - 2 * inset(z)));
+  /** Outside corner radius at height z -- what insetSquare makes of it there. */
+  const outsideCorner = (z: number): number => Math.min(corner(z) + inset(z), width(z) / 2);
+
+  // The edge itself: a fillet, rz down and r in.
+  let shell = roundedTop(m, (z, i) => insetSquare(m, side(z), side(z), corner(z), i), d.capH, r, rz);
+
+  // The ball. A fillet alone, however deep, rounds a square into a pyramid:
+  // its slices are squares to the top, so creases run up the four diagonals
+  // to a peak. A ball on a square key has its CORNERS lowest, which is the key
+  // trimmed by an ellipsoid -- circles in plan, so no diagonal is any higher
+  // than the edge beside it. Its width shrinks as the round-over deepens: far
+  // too wide to touch anything for a light fillet, and at the full extent
+  // exactly through the top face's corners where the fillet starts, so the
+  // dome meets the sides with no step and the top is a ball.
+  const cornerTop = Math.min(corner(d.capH), d.capTopSize / 2);
+  const cornerReach = Math.SQRT2 * (d.capTopSize / 2 - cornerTop) + cornerTop;
+  const fullness = r / (d.capTopSize / 2);
+  const ballR = cornerReach / Math.max(fullness, 1e-3);
+  const ballZ = d.capH - rz;
+  const ball = (shrinkR: number, shrinkZ: number): Manifold =>
+    m.Manifold.sphere(1, 128)
+      .scale([Math.max(0.05, ballR - shrinkR), Math.max(0.05, ballR - shrinkR), Math.max(0.05, rz - shrinkZ)])
+      .translate([0, 0, ballZ])
+      // Below its equator the ellipsoid would pinch the skirt in; it only
+      // shapes the top.
+      .add(m.Manifold.cube([d.keySize * 4, d.keySize * 4, ballZ + 2]).translate([-d.keySize * 2, -d.keySize * 2, -2]));
+  shell = shell.intersect(ball(0, 0));
+
+  // A dome on what is left of the flat top, hulled in so it runs out over the
+  // round-over. Once the round-over has taken the whole top there is nothing
+  // flat left to dome, and the ball already is one.
+  const flatHalf = d.capTopSize / 2 - r;
+  if (d.capDome > 0.05 && flatHalf > 0.5) {
+    const domeR = (flatHalf * flatHalf + d.capDome * d.capDome) / (2 * d.capDome);
+    const crown = m.Manifold.sphere(domeR, 128)
+      .translate([0, 0, d.capH + d.capDome - domeR])
+      .intersect(
+        m.Manifold.cube([2 * flatHalf + 2, 2 * flatHalf + 2, d.capDome + 1]).translate([
+          -flatHalf - 1,
+          -flatHalf - 1,
+          d.capH,
+        ]),
+      );
+    shell = m.Manifold.hull([shell, crown]);
+  }
+
+  // The hollow, sized from the curved outside at each height: the narrower of
+  // a wall in from the side here and the outside a roof's thickness higher up.
+  // Both are concave in z, so the narrower is too, and the hull of the slices
+  // stays inside the curve between them rather than bulging out through it.
+  const roof = d.capH - d.capTop;
+  const hollowSlices: Manifold[] = [];
+  const steps = 24;
+  for (let k = 0; k <= steps; k++) {
+    const z = k === 0 ? -1 : (roof * k) / steps;
+    const zz = Math.max(0, z);
+    const w = Math.min(width(zz) - 2 * d.capWall, width(zz + d.capTop));
+    if (w < 0.4) continue;
+    // The outside's own corner less the wall: a tighter corner than that
+    // would reach out along the diagonal and thin the wall there.
+    const c = Math.max(0, Math.min(outsideCorner(zz) - d.capWall, w / 2));
+    hollowSlices.push(m.Manifold.extrude(roundedRect(m, w, w, c), 0.001).translate([0, 0, z]));
+  }
+  let cap = shell;
+  if (roof > 0.4 && hollowSlices.length >= 2) {
+    // The hollow above is sized from the fillet; the ball trims the outside
+    // further, so the hollow is trimmed by the same ball pulled in by a wall
+    // and a roof, keeping both under it.
+    cap = cap.subtract(m.Manifold.hull(hollowSlices).intersect(ball(d.capWall, d.capTop)));
+  }
+
+  // Stem before the dish, as on the square cap, and trimmed to the outside.
+  cap = cap.add(buildStem(ctx, d).intersect(shell));
+
+  // The dish scoops what is left of the flat top, meeting the top plane at the
+  // corner of THAT, as the square cap's does at the corner of its whole face.
+  // Sized to the whole face instead, it carves a shallow square pit into the
+  // crown of a ball. Once the round-over has taken the top there is nothing
+  // to scoop, and the ball is what was asked for.
+  let surface = shell;
+  if (d.dish > 0.05 && flatHalf > 1) {
+    const cornerTop = Math.min(corner(d.capH), flatHalf);
+    const reach = Math.SQRT2 * (flatHalf - cornerTop) + cornerTop;
+    // Shallower in proportion, or the same depth over a smaller patch is a pit.
+    const depth = (d.dish * flatHalf) / (d.capTopSize / 2);
+    const dishR = (reach * reach + depth * depth) / (2 * depth);
+    const scoop = m.Manifold.sphere(dishR, 128).translate([0, 0, d.capH + dishR - depth]);
+    cap = cap.subtract(scoop);
+    surface = surface.subtract(scoop);
+  }
+
+  if (!legend || d.legendStyle === 'none') return { cap, insert: null };
+
+  // Prisms run from the floor up past the crown; the surface decides where the
+  // letter actually is. Subtracting the SOLID outside, not the hollow cap, is
+  // what keeps them out of the hollow: inside it, the outside is still solid.
+  const tall = d.capH + d.capDome + d.legendDepth + 1;
+  if (d.legendStyle === 'raised') {
+    const clipped = legend.intersect(roundedRect(m, d.capTopSize, d.capTopSize, d.capCorner));
+    if (!(clipped.area() > 0)) return { cap, insert: null };
+    const skin = clipped
+      .extrude(tall)
+      .intersect(surface.translate([0, 0, d.legendDepth]))
+      .subtract(surface);
+    return { cap, insert: skin };
+  }
+
+  const cutter = legend.extrude(tall).subtract(surface.translate([0, 0, -d.legendDepth]));
   return {
     cap: cap.subtract(cutter),
     insert: d.legendStyle === 'inlay' ? cap.intersect(cutter) : null,

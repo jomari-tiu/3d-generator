@@ -112,6 +112,10 @@ export interface Derived {
   readonly capWall: number;
   readonly capTop: number;
   readonly capCorner: number;
+  /** How far in the cap's top edge is rounded over, clamped to half the top. */
+  readonly capRound: number;
+  /** How far DOWN it is rounded: capRound, unless the cap is too short for that. */
+  readonly capRoundZ: number;
   readonly dish: number;
   /** Rise of a domed top above its edges. Not the printed switch dome. */
   readonly capDome: number;
@@ -130,6 +134,8 @@ export interface Derived {
   /** Outside of one cell, square. Cells style only. */
   readonly cell: number;
   readonly cellCorner: number;
+  /** Top edge round-over of each cell housing; 0 keeps the chamfer. */
+  readonly cellRound: number;
   /** Rim above the plate's top face: how far the keys sit down in the base. */
   readonly rimH: number;
   /** Z of the plate's top face, which is where the switches clip in. */
@@ -219,6 +225,13 @@ export function derive(p: Params): Derived {
   // 0.7 mm dish and a 0.6 mm recess is a letter-shaped hole -- which severs the
   // stem from the face it hangs off and leaves the cap in three pieces.
   const capTop = Math.max(1.2, 5 * layer, dish + recess + 2 * layer);
+  // A round-over can go no further in than the middle of the top: there the
+  // top has closed into a ball. It can go no further DOWN than the cap is
+  // tall, and on a cap shorter than it is wide it is the depth that gives --
+  // the quarter circle squashes to a quarter ellipse -- so turning it all the
+  // way up still closes the top, rather than stopping short at the cap height.
+  const capRound = Math.max(0, Math.min(Number(p.capRound ?? 0), capTopSize / 2));
+  const capRoundZ = Math.min(capRound, capH - 0.2);
 
   const wallT = Number(p.wall);
   const endWall = Math.max(wallT, Number(p.endWall));
@@ -276,12 +289,16 @@ export function derive(p: Params): Derived {
   return {
     nozzle, layer, fit, clear, stemClear,
     sw, legend, keys,
-    pitch, keySize, capH, capTaperDeg, capTopSize, capWall, capTop, capCorner, dish, capDome,
+    pitch, keySize, capH, capTaperDeg, capTopSize, capWall, capTop, capCorner, capRound, capRoundZ, dish, capDome,
     legendSize: Number(p.legendSize),
     legendDepth,
     legendStyle,
     baseStyle, keyGap, pocket, cell,
     cellCorner: Number(p.cellCorner),
+    // The round-over comes in from the outside and the pocket is cut from the
+    // inside: past the wall between them the rim's top would be a knife edge,
+    // so a land of 0.4 mm is always left.
+    cellRound: Math.max(0, Math.min(Number(p.cellRound ?? 0), wallT - 0.4, baseH - 0.2)),
     rimH, plateTop, capRest, keyTravel, pressedProud,
     plateT, cavityD, wallT, endWall, baseW, baseD, baseH, baseCorner, chamfer,
     floorT,

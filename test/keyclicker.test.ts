@@ -61,7 +61,8 @@ describe('key clicker', () => {
   it('stands a raised legend proud of the cap, and prints that cap legend-up', async () => {
     const m = await kernel();
     try {
-      const p = paramsWith({ text: 'AB', legendStyle: 'raised' });
+      // Dished, so there is a curve for the letters to follow.
+      const p = paramsWith({ text: 'AB', legendStyle: 'raised', topCurve: -0.8 });
       const d = derive(p);
       const result = keyClickerGenerator.build(p, ctxFor(m));
 
@@ -609,6 +610,150 @@ describe('key clicker top surface', () => {
       const withWalls = base(true);
       const without = base(false);
       expect(withWalls.stats.volumeMm3).toBeGreaterThan(without.stats.volumeMm3);
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+describe('key clicker rounding', () => {
+  const solidOf = (m: ManifoldToplevel, mesh: { numProp: number; position: Float32Array; index: Uint32Array }) =>
+    m.Manifold.ofMesh({ numProp: mesh.numProp, vertProperties: mesh.position, triVerts: mesh.index });
+  /** Top of the material in a thin column at x, or -Infinity if there is none. */
+  const topAt = (m: ManifoldToplevel, solid: ReturnType<typeof solidOf>, x: number) => {
+    const hit = m.Manifold.cube([0.12, 0.12, 60], true).translate([x, 0, 0]).intersect(solid);
+    return hit.isEmpty() ? -Infinity : hit.boundingBox().max[2];
+  };
+
+  it('rounds the top edge over, and the top toward a ball, with the hollow kept inside', async () => {
+    const m = await kernel();
+    try {
+      // Flat top and straight sides, so the expected surface is the
+      // round-over alone: a quarter circle, or a quarter ellipse once the cap
+      // is too short for the circle (10 asks for more than this cap is tall).
+      for (const capRound of [2, 4, 10]) {
+        const p = paramsWith({ text: 'A', topCurve: 0, capTaper: 0, legendStyle: 'none', capRound });
+        const d = derive(p);
+        const r = d.capRound;
+        const rz = d.capRoundZ;
+        const result = keyClickerGenerator.build(p, ctxFor(m));
+        expect(result.issues.filter((i) => i.level === 'error')).toEqual([]);
+        const cap = solidOf(m, result.parts.find((x) => x.id === 'cap-0')!.mesh);
+        expect(cap.decompose().length, `r ${capRound}`).toBe(1);
+
+        // Along the middle of a side the top is flat to (half - r), then falls
+        // on a circle. Material all the way up to it, at every x, means the
+        // hollow never broke out through the curve and the stem never stood
+        // proud of it.
+        const half = d.capTopSize / 2;
+        for (let x = 0; x < half - 0.2; x += 0.5) {
+          // The lower of the fillet and the ball trimming it, the ball passing
+          // through the top face's corners at the full extent.
+          const u = Math.max(0, x - (half - r)) / r;
+          const fillet = d.capH - rz * (1 - Math.sqrt(Math.max(0, 1 - u * u)));
+          const c = Math.min(d.capCorner, half);
+          const ballR = (Math.SQRT2 * (half - c) + c) / (r / half);
+          const ball = d.capH - rz + rz * Math.sqrt(Math.max(0, 1 - (x / ballR) ** 2));
+          const expected = Math.min(fillet, ball);
+          expect(topAt(m, cap, x), `r ${capRound} at x ${x.toFixed(1)}`).toBeCloseTo(expected, 0);
+          expect(topAt(m, cap, x)).toBeLessThanOrEqual(expected + 0.15);
+        }
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('keeps the wall whole across the corners of a rounded cap too', async () => {
+    const m = await kernel();
+    try {
+      for (const capRound of [3, 10]) {
+        const p = paramsWith({ text: 'A', legendStyle: 'none', topCurve: 0, capRound });
+        const d = derive(p);
+        const cap = solidOf(m, keyClickerGenerator.build(p, ctxFor(m)).parts.find((x) => x.id === 'cap-0')!.mesh);
+        // Walk out along the diagonal: material at the top of every column
+        // means the hollow stayed under the surface across the corner as well.
+        const reach = d.capTopSize / 2 - 0.3;
+        for (let t = 0; t < reach; t += 0.5) {
+          const hit = m.Manifold.cube([0.12, 0.12, 60], true).translate([t / Math.SQRT2, t / Math.SQRT2, 0]).intersect(cap);
+          if (hit.isEmpty()) continue; // past the outside, beyond the corner
+          const col = hit.boundingBox();
+          // Solid from the hollow's roof up: the column's top part is one run.
+          const slab = m.Manifold.cube([0.12, 0.12, d.capTop * 0.6], true)
+            .translate([t / Math.SQRT2, t / Math.SQRT2, col.max[2] - d.capTop * 0.3])
+            .intersect(cap);
+          expect(slab.volume(), `r ${capRound} diag ${t}`).toBeGreaterThan(0.12 * 0.12 * d.capTop * 0.6 * 0.9);
+        }
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('turns all the way up into a ball, even on a cap shorter than it is wide', () => {
+    // Default cap: 7 mm tall, about 16 mm across the top.
+    const d = derive(paramsWith({ text: 'A', capRound: 10 }));
+    expect(d.capRound).toBeCloseTo(d.capTopSize / 2, 6);
+    expect(d.capRoundZ).toBeCloseTo(d.capH - 0.2, 6);
+    expect(derive(paramsWith({ text: 'A', capRound: 0 })).capRound).toBe(0);
+  });
+
+  it('lays every legend style along the round-over, in one piece', async () => {
+    const m = await kernel();
+    try {
+      for (const legendStyle of ['raised', 'inlay', 'engraved']) {
+        const p = paramsWith({ text: 'H', legendStyle, legendSize: 9, capRound: 5, topCurve: 0 });
+        const d = derive(p);
+        const result = keyClickerGenerator.build(p, ctxFor(m));
+        expect(result.issues.filter((i) => i.level === 'error'), legendStyle).toEqual([]);
+        for (const part of result.parts) {
+          expect(solidOf(m, part.mesh).decompose().length, `${legendStyle} / ${part.name}`).toBe(1);
+        }
+        if (legendStyle === 'engraved') continue;
+        // The H's uprights sit out on the curve, where a flat letter would be
+        // buried on one side and floating on the other: as thick as the legend
+        // depth there, measured straight up.
+        const insert = solidOf(m, result.parts.find((x) => x.id === 'legend-0')!.mesh);
+        for (const x of [-3, 3]) {
+          const bb = m.Manifold.cube([0.15, 0.15, 30], true).translate([x, 0, d.capH]).intersect(insert).boundingBox();
+          expect(bb.max[2] - bb.min[2], `${legendStyle} at ${x}`).toBeCloseTo(d.legendDepth, 1);
+        }
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('warns that a cut-in cap rounded into a ball has nothing to stand on', () => {
+    const warnings = (patch: Params) =>
+      (keyClickerGenerator.validate?.(paramsWith({ text: 'A', ...patch })) ?? [])
+        .filter((i) => i.paramIds?.includes('capRound'))
+        .map((i) => i.message);
+    expect(warnings({ legendStyle: 'inlay', capRound: 10 }).join(' ')).toMatch(/print on a point/);
+    expect(warnings({ legendStyle: 'inlay', capRound: 5 }).join(' ')).toMatch(/stands upside down on only/);
+    // Raised letters print the right way up, and a light round-over leaves plenty.
+    expect(warnings({ legendStyle: 'raised', capRound: 10 })).toEqual([]);
+    expect(warnings({ legendStyle: 'inlay', capRound: 1 })).toEqual([]);
+  });
+
+  it('rounds the top of each cell housing, leaving a land beside the pocket', async () => {
+    const m = await kernel();
+    try {
+      const p = paramsWith({ text: 'AB', baseStyle: 'cells', cellRound: 6, keyring: false });
+      const d = derive(p);
+      // Clamped short of the wall, so the rim never comes to a knife edge.
+      expect(d.cellRound).toBeCloseTo(d.wallT - 0.4, 6);
+      const result = keyClickerGenerator.build(p, ctxFor(m));
+      expect(result.issues.filter((i) => i.level === 'error')).toEqual([]);
+      const base = solidOf(m, result.parts.find((x) => x.id === 'base')!.mesh);
+      expect(base.decompose().length).toBe(1);
+
+      // Through the middle of the first cell, out to its outside edge.
+      const x0 = keyX(d, 0);
+      const outside = topAt(m, base, x0 - d.cell / 2 + 0.1);
+      const land = topAt(m, base, x0 - d.pocket / 2 - 0.15);
+      expect(outside).toBeLessThan(d.baseH - d.cellRound * 0.5);
+      expect(land).toBeCloseTo(d.baseH, 1);
     } finally {
       cleanup();
     }

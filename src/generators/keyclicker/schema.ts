@@ -32,7 +32,7 @@ export const keyClickerParams: readonly ParamSpec[] = [
     min: 2,
     max: 14,
     step: 0.5,
-    default: 6,
+    default: 9.5,
     help: 'Cap height. Legends are small, so this is where a thin font gives up first.',
   }),
   num('legendDepth', 'Legend depth', {
@@ -145,8 +145,17 @@ export const keyClickerParams: readonly ParamSpec[] = [
     min: -3,
     max: 3,
     step: 0.1,
-    default: -0.8,
+    default: 0,
     help: 'Below zero scoops the top down for a fingertip (dished), zero is flat, above zero rounds it up like a button (domed). The number is how far the middle sits from the edges. Raised letters follow the curve.',
+  }),
+  num('capRound', 'Top edge rounding', {
+    group: 'cap',
+    unit: 'mm',
+    min: 0,
+    max: 10,
+    step: 0.1,
+    default: 0,
+    help: 'Rounds over the edge where the top meets the sides. All the way up, the whole top rounds into a ball - it stops at half the top face, or at the cap height if that comes first. Legends follow the curve.',
   }),
 
   // ------------------------------------------------------------------- body
@@ -186,6 +195,16 @@ export const keyClickerParams: readonly ParamSpec[] = [
     default: 4,
     visibleIf: isCells,
     help: 'Rounder corners pinch in deeper between the cells.',
+  }),
+  num('cellRound', 'Cell top rounding', {
+    group: 'body',
+    unit: 'mm',
+    min: 0,
+    max: 6,
+    step: 0.1,
+    default: 0,
+    visibleIf: isCells,
+    help: 'Rounds over the top edge of each housing instead of the small chamfer. It cannot round past the wall around the key, so it stops just short of the wall thickness - thicken the wall to round further.',
   }),
   num('wall', 'Wall thickness', {
     group: 'body',
