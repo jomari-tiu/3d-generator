@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { cleanup, kernel, loadFont } from './kernel';
 import { keyClickerGenerator } from '../src/generators/keyclicker/build';
-import { derive, keyX, legendChars, SWITCHES } from '../src/generators/keyclicker/geometry';
+import { derive, keyPos, legendChars, SWITCHES } from '../src/generators/keyclicker/geometry';
+
+const keyX = (d: ReturnType<typeof derive>, i: number): number => keyPos(d, i)[0];
 import { coerceAll, defaultsOf } from '../src/core/params/validate';
 import { packPlate } from '../src/core/build/layout';
 import type { BuildCtx, Params } from '../src/core/params/types';
@@ -31,7 +33,8 @@ describe('key clicker', () => {
   it('builds a closed body and a cap-plus-legend per key', async () => {
     const m = await kernel();
     try {
-      const result = keyClickerGenerator.build(paramsWith({ text: 'KONG' }), ctxFor(m));
+      // Raised: the legend is a body of its cap, printed with it.
+      const result = keyClickerGenerator.build(paramsWith({ text: 'KONG', legendStyle: 'raised' }), ctxFor(m));
       expect(result.issues.filter((i) => i.level === 'error')).toEqual([]);
 
       const ids = result.parts.map((p) => p.id);
@@ -112,7 +115,7 @@ describe('key clicker', () => {
         ['choc', { keyPitch: 18, keySize: 16.4, capHeight: 5.5 }],
         ['printed', { keyPitch: 16, keySize: 14.4, capHeight: 6, legendSize: 5 }],
       ] as [string, Params][]) {
-        const p = paramsWith({ text: 'A', switchType: type, topCurve: -0.8, ...patch });
+        const p = paramsWith({ text: 'A', switchType: type, topCurve: -0.8, legendStyle: 'raised', ...patch });
         const d = derive(p);
         const result = keyClickerGenerator.build(p, ctxFor(m));
         const cap = result.parts.find((x) => x.id === 'cap-0')!;
@@ -170,7 +173,7 @@ describe('key clicker', () => {
         ['choc', { keyPitch: 18, keySize: 16.4, capHeight: 5.5 }],
         ['printed', { keyPitch: 16, keySize: 14.4, capHeight: 6, legendSize: 5 }],
       ] as [string, Params][]) {
-        const p = paramsWith({ text: 'A', switchType: type, topCurve: -0.8, ...patch });
+        const p = paramsWith({ text: 'A', switchType: type, topCurve: -0.8, legendStyle: 'raised', ...patch });
         const d = derive(p);
         const result = keyClickerGenerator.build(p, ctxFor(m));
         const cap = result.parts.find((x) => x.id === 'cap-0')!;
@@ -243,7 +246,10 @@ describe('key clicker', () => {
         const cap = result.parts.find((x) => x.id === 'cap-0')!;
         const d = derive(p);
         // The cap is the footprint asked for, tapers inward, and is capH tall.
-        expect(cap.mesh.bbox.max[0] - cap.mesh.bbox.min[0], type).toBeCloseTo(d.keySize, 1);
+        // Where its skirt is cut back to clear the plate (a Choc), it is as
+        // wide as the taper has got by the new bottom edge.
+        const widest = d.keySize - 2 * d.skirtLift * Math.tan((d.capTaperDeg * Math.PI) / 180);
+        expect(cap.mesh.bbox.max[0] - cap.mesh.bbox.min[0], type).toBeCloseTo(widest, 1);
         expect(cap.mesh.bbox.max[2] - cap.mesh.bbox.min[2], type).toBeCloseTo(d.capH, 1);
         expect(d.capTopSize, type).toBeLessThan(d.keySize);
 
@@ -754,6 +760,90 @@ describe('key clicker rounding', () => {
       const land = topAt(m, base, x0 - d.pocket / 2 - 0.15);
       expect(outside).toBeLessThan(d.baseH - d.cellRound * 0.5);
       expect(land).toBeCloseTo(d.baseH, 1);
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+describe('key clicker separate letters', () => {
+  const solidOf = (m: ManifoldToplevel, mesh: { numProp: number; position: Float32Array; index: Uint32Array }) =>
+    m.Manifold.ofMesh({ numProp: mesh.numProp, vertProperties: mesh.position, triVerts: mesh.index });
+
+  it('is the default, and lays each letter out on its own, apart from its cap', async () => {
+    const m = await kernel();
+    try {
+      expect(derive(paramsWith()).legendStyle).toBe('separate');
+      const result = keyClickerGenerator.build(paramsWith({ text: 'AB' }), ctxFor(m));
+      expect(result.issues.filter((i) => i.level === 'error')).toEqual([]);
+      expect(result.parts.map((p) => p.id)).toEqual(expect.arrayContaining(['cap-0', 'letter-0', 'cap-1', 'letter-1']));
+      for (const i of [0, 1]) {
+        const cap = result.parts.find((p) => p.id === `cap-${i}`)!;
+        const letter = result.parts.find((p) => p.id === `letter-${i}`)!;
+        // Not grouped, so the plate packs it as its own object; flat on its
+        // back; and shown pressed into its own cap. The cap prints top up.
+        expect(letter.group).toBeUndefined();
+        expect(letter.orientation).toEqual([0, 0, 0]);
+        expect(letter.assembly).toEqual(cap.assembly);
+        expect(cap.orientation).toEqual([0, 0, 0]);
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('seats the letter in a recess it fits, standing proud by the legend depth', async () => {
+    const m = await kernel();
+    try {
+      for (const patch of [{ topCurve: 0 }, { topCurve: -0.8 }, { topCurve: 1.2 }, { capRound: 5 }] as Params[]) {
+        const p = paramsWith({ text: 'H', legendSize: 9, ...patch });
+        const d = derive(p);
+        const result = keyClickerGenerator.build(p, ctxFor(m));
+        const cap = solidOf(m, result.parts.find((x) => x.id === 'cap-0')!.mesh);
+        const letter = solidOf(m, result.parts.find((x) => x.id === 'letter-0')!.mesh);
+        const tag = JSON.stringify(patch);
+        expect(letter.decompose().length, tag).toBe(1);
+        // It fits: no overlap with the cap it presses into.
+        expect(cap.intersect(letter).volume(), tag).toBeLessThan(0.01);
+        // Flat-bottomed, so it prints on its back.
+        const bb = letter.boundingBox();
+        const bottom = m.Manifold.cube([40, 40, 0.05], true).translate([0, 0, bb.min[2] + 0.025]).intersect(letter);
+        expect(bottom.volume(), tag).toBeGreaterThan(0);
+        // Proud by the legend depth over the highest of the top anywhere under
+        // the letter's footprint -- so on a dome it is not sunk below the crown.
+        const around = m.Manifold.cube([bb.max[0] - bb.min[0], bb.max[1] - bb.min[1], 40], true)
+          .translate([(bb.min[0] + bb.max[0]) / 2, (bb.min[1] + bb.max[1]) / 2, 0]);
+        const capTop = around.intersect(cap).boundingBox().max[2];
+        expect(bb.max[2] - capTop, tag).toBeGreaterThanOrEqual(d.legendDepth - 0.05);
+      }
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+describe('key clicker travel', () => {
+  it('lets every key press its full travel without the cap reaching the plate', async () => {
+    const m = await kernel();
+    try {
+      // A tall cap on a short switch: its skirt used to land on the plate a
+      // millimetre in, so a Choc key bottomed out before it ever clicked.
+      for (const [switchType, capHeight] of [['mx', 7], ['mx', 10], ['choc', 5.5], ['choc', 7]] as const) {
+        const p = paramsWith({ text: 'A', switchType, capHeight, legendStyle: 'none', baseStyle: 'cells' });
+        const d = derive(p);
+        const result = keyClickerGenerator.build(p, ctxFor(m));
+        const solid = (id: string, push = 0) => {
+          const part = result.parts.find((x) => x.id === id)!;
+          const [x, y, z] = part.assembly ?? [0, 0, 0];
+          return m.Manifold.ofMesh({
+            numProp: part.mesh.numProp, vertProperties: part.mesh.position, triVerts: part.mesh.index,
+          }).translate([x, y, z - push]);
+        };
+        const base = solid('base');
+        for (const push of [0, d.keyTravel / 2, d.keyTravel]) {
+          expect(solid('cap-0', push).intersect(base).volume(), `${switchType} ${capHeight} mm, pushed ${push}`).toBeLessThan(0.01);
+        }
+      }
     } finally {
       cleanup();
     }

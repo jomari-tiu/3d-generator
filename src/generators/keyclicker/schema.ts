@@ -46,14 +46,15 @@ export const keyClickerParams: readonly ParamSpec[] = [
   }),
   choice('legendStyle', 'Legend', {
     group: 'keys',
-    default: 'raised',
+    default: 'separate',
     options: [
+      { value: 'separate', label: 'Separate letters (press in)' },
       { value: 'raised', label: 'Raised' },
       { value: 'inlay', label: 'Two-colour inlay' },
       { value: 'engraved', label: 'Engraved only' },
       { value: 'none', label: 'Blank keys' },
     ],
-    help: 'Raised letters you can feel, printed legend-up - which means supports under the cap. The inlay prints upside down with none: swap filament at the right layer and the letters come out in a second colour.',
+    help: 'Separate letters print flat on their own, in any colour, and press into a recess in the cap - no filament swap; the cap prints top up, with supports under it. Raised letters are built onto the cap, printed legend-up with supports. The inlay prints upside down with none: swap filament at the right layer and the letters come out in a second colour.',
   }),
 
   // --------------------------------------------------------------- switches
@@ -283,6 +284,16 @@ export const keyClickerParams: readonly ParamSpec[] = [
     step: 0.01,
     default: 0.1,
     help: 'Applied to the switch cutouts in the plate. Switch fits want this TIGHT - 0.1 mm, not 0.25.',
+  }),
+  num('letterClearance', 'Letter clearance', {
+    group: 'tol',
+    unit: 'mm',
+    min: 0,
+    max: 0.4,
+    step: 0.01,
+    default: 0.12,
+    visibleIf: (v) => v.legendStyle === 'separate',
+    help: 'Gap all round each separate letter in its recess. Too tight and it will not press in; too loose and it wants a drop of glue.',
   }),
   num('stemClearance', 'Stem socket clearance', {
     group: 'tol',

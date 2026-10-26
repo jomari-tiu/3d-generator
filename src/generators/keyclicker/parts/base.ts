@@ -1,24 +1,22 @@
 import type { CrossSection, Manifold } from 'manifold-3d';
 import type { BuildCtx } from '../../../core/params/types';
 import { roundedRect, segmentsForRadius, taperedExtrude } from '../../../core/kernel/primitives';
-import { keyX, type Derived } from '../geometry';
+import { keyPos, type Derived } from '../geometry';
 import { insetSquare, roundedTop } from './rounding';
 
 /**
- * The body seen from above. A tray is one rounded bar; cells are a rounded
- * square per key, overlapping by one wall so neighbours share it.
+ * The body seen from above: the union of its convex pieces. A row tray is one
+ * rounded bar; cells are a rounded square per key, overlapping by one wall so
+ * neighbours share it; a WASD tray is a bar and a block.
  *
- * The cavity under the plate is this outline offset inward, so the two styles
+ * The cavity under the plate is this outline offset inward, so the styles
  * need no separate plumbing underneath.
  */
 export function bodyFootprint(ctx: BuildCtx, d: Derived): CrossSection {
   const { m } = ctx;
-  if (d.baseStyle !== 'cells') return roundedRect(m, d.baseW, d.baseD, d.baseCorner);
-  const cells: CrossSection[] = [];
-  for (let i = 0; i < d.keys; i++) {
-    cells.push(roundedRect(m, d.cell, d.cell, d.cellCorner).translate([keyX(d, i), 0]));
-  }
-  return m.CrossSection.union(cells);
+  return m.CrossSection.union(
+    d.bodyPieces.map((b) => roundedRect(m, b.w, b.h, b.corner).translate([b.x, b.y])),
+  );
 }
 
 /**
@@ -65,41 +63,17 @@ function chamferedBox(
 export function buildBase(ctx: BuildCtx, d: Derived): Manifold {
   const { m } = ctx;
 
-  let base: Manifold;
-  if (d.baseStyle === 'cells') {
-    const cells: Manifold[] = [];
-    for (let i = 0; i < d.keys; i++) {
-      // Rounded over or chamfered, per cell either way: one convex block each,
-      // so where neighbours meet the round-overs still pinch in between them.
-      if (d.cellRound > 0.05) {
-        cells.push(
-          roundedTop(m, (_z, inset) => insetSquare(m, d.cell, d.cell, d.cellCorner, inset), d.baseH, d.cellRound)
-            .translate([keyX(d, i), 0, 0]),
-        );
-        continue;
-      }
-      cells.push(
-        chamferedBox(
-          ctx,
-          roundedRect(m, d.cell, d.cell, d.cellCorner),
-          d.cell,
-          d.cell,
-          d.baseH,
-          d.chamfer,
-        ).translate([keyX(d, i), 0, 0]),
-      );
-    }
-    base = m.Manifold.union(cells);
-  } else {
-    base = chamferedBox(
-      ctx,
-      roundedRect(m, d.baseW, d.baseD, d.baseCorner),
-      d.baseW,
-      d.baseD,
-      d.baseH,
-      d.chamfer,
-    );
-  }
+  // One convex block per piece, rounded over (cells) or chamfered, then
+  // unioned: where neighbouring pieces meet, the round-overs and chamfers
+  // pinch in between them rather than running across the join.
+  const rounded = d.baseStyle === 'cells' && d.cellRound > 0.05;
+  const blocks = d.bodyPieces.map((b) =>
+    (rounded
+      ? roundedTop(m, (_z, inset) => insetSquare(m, b.w, b.h, b.corner, inset), d.baseH, d.cellRound)
+      : chamferedBox(ctx, roundedRect(m, b.w, b.h, b.corner), b.w, b.h, d.baseH, d.chamfer)
+    ).translate([b.x, b.y, 0]),
+  );
+  let base: Manifold = blocks.length === 1 ? blocks[0]! : m.Manifold.union(blocks);
 
   const footprint = bodyFootprint(ctx, d);
 
@@ -121,9 +95,23 @@ export function buildBase(ctx: BuildCtx, d: Derived): Manifold {
     if (ribW >= 2 * d.nozzle) {
       const inner = footprint.offset(-d.wallT + 0.01, 'Round');
       const ribs: CrossSection[] = [];
-      for (let i = 0; i < d.keys - 1; i++) {
-        const x = (keyX(d, i) + keyX(d, i + 1)) / 2;
-        ribs.push(m.CrossSection.square([ribW, d.baseD + 2], true).translate([x, 0]));
+      // Neighbours by where they are, not by their order: side by side in a
+      // row gets an upright strip between them, and a key over the row below
+      // gets a crosswise strip between the rows, as wide as the upper key.
+      // A row's strips run the full depth of the bar, as they always have; in
+      // a cluster they keep to their own row, out of the next row's cutouts.
+      const band = d.layout === 'row' ? d.baseD + 2 : d.pitch;
+      const near = (a: number, b: number) => Math.abs(a - b) < d.pitch * 0.05;
+      for (let i = 0; i < d.keys; i++) {
+        for (let j = 0; j < d.keys; j++) {
+          const [xi, yi] = keyPos(d, i);
+          const [xj, yj] = keyPos(d, j);
+          if (near(yi, yj) && near(xj - xi, d.pitch)) {
+            ribs.push(m.CrossSection.square([ribW, band], true).translate([(xi + xj) / 2, yi]));
+          } else if (near(yi - yj, d.pitch) && Math.abs(xi - xj) < d.pitch * 0.75) {
+            ribs.push(m.CrossSection.square([d.pitch, ribW], true).translate([xi, (yi + yj) / 2]));
+          }
+        }
       }
       // Overlap floor and plate a hair each way so the rib fuses into both
       // instead of touching them on a plane.
@@ -136,12 +124,30 @@ export function buildBase(ctx: BuildCtx, d: Derived): Manifold {
   if (d.rimH > 0.05) {
     const r = d.capCorner + d.keyGap;
     let pocket: CrossSection;
+    const perKey = () =>
+      m.CrossSection.union(
+        Array.from({ length: d.keys }, (_, i) => roundedRect(m, d.pocket, d.pocket, r).translate([...keyPos(d, i)])),
+      );
     if (d.baseStyle === 'cells') {
-      const ps: CrossSection[] = [];
-      for (let i = 0; i < d.keys; i++) {
-        ps.push(roundedRect(m, d.pocket, d.pocket, r).translate([keyX(d, i), 0]));
-      }
-      pocket = m.CrossSection.union(ps);
+      pocket = perKey();
+    } else if (d.layout === 'wasd' && d.keys > 1) {
+      // One pocket shaped like the cluster: a straight slot along the bottom
+      // row, as a row tray has, and the top key's pocket over it. Per-key
+      // pockets would not do: where two rounded corners meet under the top
+      // key they leave a cusp of rim standing in the pocket. The slot and the
+      // top pocket sit a hair apart, and closing the union takes that hairline
+      // out rather than printing it as a sliver.
+      const [top, ...row] = Array.from({ length: d.keys }, (_, i) => keyPos(d, i));
+      const xs = row.map((c) => c[0]);
+      const slot = roundedRect(m, Math.max(...xs) - Math.min(...xs) + d.pocket, d.pocket, r).translate([
+        (Math.min(...xs) + Math.max(...xs)) / 2,
+        row[0]![1],
+      ]);
+      const close = Math.max(0.6, d.pitch - d.pocket + 0.1);
+      pocket = slot
+        .add(roundedRect(m, d.pocket, d.pocket, r).translate([...top!]))
+        .offset(close, 'Round')
+        .offset(-close, 'Round');
     } else {
       pocket = roundedRect(m, (d.keys - 1) * d.pitch + d.pocket, d.pocket, r);
     }
@@ -153,7 +159,7 @@ export function buildBase(ctx: BuildCtx, d: Derived): Manifold {
   // --- one opening per key
   const openings: Manifold[] = [];
   for (let i = 0; i < d.keys; i++) {
-    openings.push(keyOpening(ctx, d).translate([keyX(d, i), 0, 0]));
+    openings.push(keyOpening(ctx, d).translate([...keyPos(d, i), 0]));
   }
   base = base.subtract(m.Manifold.union(openings));
 
@@ -161,7 +167,7 @@ export function buildBase(ctx: BuildCtx, d: Derived): Manifold {
   if (d.sw.stem === 'post') {
     const towers: Manifold[] = [];
     for (let i = 0; i < d.keys; i++) {
-      towers.push(buildPost(ctx, d).translate([keyX(d, i), 0, 0]));
+      towers.push(buildPost(ctx, d).translate([...keyPos(d, i), 0]));
     }
     base = base.add(m.Manifold.union(towers));
   }
@@ -263,7 +269,7 @@ function buildPost(ctx: BuildCtx, d: Derived): Manifold {
   return m.Manifold.union([shaft, barb]).translate([0, 0, floor]);
 }
 
-/** Keyring loop, on the end of the bar or on its long side. */
+/** Keyring loop, on the end of the body or its side, wherever derive anchored it. */
 function addLoop(ctx: BuildCtx, d: Derived, base: Manifold): Manifold {
   const { m } = ctx;
   const lugR = d.loopD / 2 + Math.max(1.8, d.wallT);
@@ -276,16 +282,15 @@ function addLoop(ctx: BuildCtx, d: Derived, base: Manifold): Manifold {
   // dent halfway along the tab.
   // Only half a wall deep, so the strip never reaches into the switch cavity.
   const sink = d.wallT / 2;
+  const { x, y, axis } = d.loopAnchor;
   let centre: [number, number];
   let root: CrossSection;
-  if (d.loopSide === 'side') {
-    const cy = d.baseD / 2 + lugR - 1.4;
-    centre = [0, cy];
-    root = m.CrossSection.square([lugR * 2, sink], true).translate([0, d.baseD / 2 - sink / 2]);
+  if (axis === 'y') {
+    centre = [x, y + lugR - 1.4];
+    root = m.CrossSection.square([lugR * 2, sink], true).translate([x, y - sink / 2]);
   } else {
-    const cx = d.baseW / 2 + lugR - 1.4;
-    centre = [cx, 0];
-    root = m.CrossSection.square([sink, lugR * 2], true).translate([d.baseW / 2 - sink / 2, 0]);
+    centre = [x + lugR - 1.4, y];
+    root = m.CrossSection.square([sink, lugR * 2], true).translate([x - sink / 2, y]);
   }
 
   const tab = m.CrossSection.hull([m.CrossSection.circle(lugR, 48).translate(centre), root]);

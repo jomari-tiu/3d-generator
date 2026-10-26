@@ -1,7 +1,7 @@
 import { serialize } from '../../core/kernel/serialize';
 import type { BuildCtx, BuildResult, Generator, Issue, Params, Part } from '../../core/params/types';
 import { missingCharacters } from '../../core/text/textSolid';
-import { derive, keyX, legendChars, SWITCHES, type Derived } from './geometry';
+import { derive, keyPos, legendChars, SWITCHES, type Derived } from './geometry';
 import { buildBase } from './parts/base';
 import { buildDome, buildKeycap, legendOutline } from './parts/keycap';
 import { keyClickerGroups, keyClickerParams } from './schema';
@@ -14,6 +14,14 @@ function validate(p: Params): Issue[] {
     issues.push({
       level: 'error',
       message: 'Enter at least one character - each one becomes a key.',
+      paramIds: ['text'],
+    });
+    return issues;
+  }
+  if (d.layout === 'wasd' && d.legend.length < 4) {
+    issues.push({
+      level: 'error',
+      message: 'A WASD cluster needs four keys: the top key, then the three below it, left to right.',
       paramIds: ['text'],
     });
     return issues;
@@ -105,7 +113,7 @@ function validate(p: Params): Issue[] {
   // Cut-in caps print upside down, standing on the top face, and the
   // round-over takes that face away from the outside in.
   const flat = d.capTopSize - 2 * d.capRound;
-  if (d.capRound > 0.05 && d.legendStyle !== 'raised' && flat < 6) {
+  if (d.capRound > 0.05 && d.legendStyle !== 'raised' && d.legendStyle !== 'separate' && flat < 6) {
     issues.push({
       level: 'warn',
       message:
@@ -206,11 +214,14 @@ function validate(p: Params): Issue[] {
 
 function readouts(d: Derived): Record<string, string> {
   const out: Record<string, string> = {
-    Keys: `${d.keys} on a ${Number(d.pitch.toFixed(2))} mm pitch`,
+    Keys:
+      d.layout === 'wasd'
+        ? `${d.keys} in a WASD cluster on a ${Number(d.pitch.toFixed(2))} mm pitch`
+        : `${d.keys} on a ${Number(d.pitch.toFixed(2))} mm pitch`,
     Body: `${d.baseW.toFixed(1)} x ${d.baseD.toFixed(1)} x ${d.baseH.toFixed(1)} mm`,
     'With caps': `${(
       Math.max(d.baseH, d.plateTop + d.capRest + d.capH + d.capDome) +
-      (d.legendStyle === 'raised' ? d.legendDepth : 0)
+      (d.legendStyle === 'raised' || d.legendStyle === 'separate' ? d.legendDepth : 0)
     ).toFixed(1)} mm tall`,
     'Keycap top': `${d.capTopSize.toFixed(1)} mm across`,
     Hardware: d.sw.hardware === 'none' ? 'none - fully printed' : `${d.keys} x ${d.sw.hardware.replace('one ', '').replace(' per key', '')}`,
@@ -266,10 +277,16 @@ function build(p: Params, ctx: BuildCtx): BuildResult {
   // Raised letters stand on the face that would otherwise go on the bed, so a
   // raised legend is the one case where the cap prints the right way up.
   const raised = d.legendStyle === 'raised';
-  const capOrientation: [number, number, number] = raised ? [0, 0, 0] : [180, 0, 0];
+  const separate = d.legendStyle === 'separate';
+  // A cap for a separate letter prints top-up as well: the recess opens
+  // upward, where it can be seen and cleaned, and the face is not marked by
+  // the bed. The hollow underneath needs support, as for a raised legend.
+  const capOrientation: [number, number, number] = raised || separate ? [0, 0, 0] : [180, 0, 0];
   const capNote = raised
     ? 'Prints legend upward, as laid out - raised letters cannot be pressed into the bed. The skirt is hollow and the stem hangs inside it, so turn supports on. Switch the legend to the two-colour inlay if you would rather print it upside down with none.'
-    : 'MUST print upside down, top face on the bed. The stem hangs off the underside, so the right way up it would start in mid-air.';
+    : separate
+      ? 'Prints top up, as laid out, with the letter recess facing up. The skirt is hollow and the stem hangs inside it, so turn supports on. Press the letter in once both are printed.'
+      : 'MUST print upside down, top face on the bed. The stem hangs off the underside, so the right way up it would start in mid-air.';
 
   d.legend.forEach((ch, i) => {
     const outline = d.legendStyle === 'none' ? null : legendOutline(ctx, d, fontId, ch);
@@ -280,8 +297,7 @@ function build(p: Params, ctx: BuildCtx): BuildResult {
     // cutting -- so without this they all stack in the same place in the
     // assembled view. Sitting on the plate, less the depth the stem goes in by.
     const seat: [number, number, number] = [
-      keyX(d, i),
-      0,
+      ...keyPos(d, i),
       d.plateTop + d.capRest,
     ];
 
@@ -296,7 +312,20 @@ function build(p: Params, ctx: BuildCtx): BuildResult {
       orientationNote: capNote,
     });
 
-    if (insert) {
+    if (insert && separate) {
+      // Its own object, not grouped with the cap: the plate lays it out on its
+      // own, flat on its back, to print in any colour and press in after.
+      parts.push({
+        id: `letter-${i}`,
+        name: `Letter ${ch}`,
+        mesh: serialize(insert),
+        color: String(p.legendColor),
+        // Shown pressed into its cap.
+        assembly: seat,
+        orientation: [0, 0, 0],
+        orientationNote: 'Print flat, as laid out, then press it into the recess in its keycap - a drop of glue if it is loose.',
+      });
+    } else if (insert) {
       try {
         parts.push({
           id: `legend-${i}`,
@@ -333,7 +362,7 @@ function build(p: Params, ctx: BuildCtx): BuildResult {
       quantity: d.keys,
       // One dome stands in for all of them in the assembled view: it sits under
       // the first key, in its seat.
-      assembly: [keyX(d, 0), 0, d.plateTop - d.wellDepth - d.domeH - 0.4],
+      assembly: [...keyPos(d, 0), d.plateTop - d.wellDepth - d.domeH - 0.4],
       orientationNote:
         'Print apex up - a shallow cone supports itself. Slow it right down: this part is three layers thick and has to flex for the life of the toy.',
     });
@@ -356,6 +385,7 @@ function build(p: Params, ctx: BuildCtx): BuildResult {
 export const keyClickerGenerator: Generator = {
   id: 'keyclicker',
   name: 'Key clicker',
+  family: { id: 'keyclicker', label: 'Row' },
   description:
     'A row of keyboard keys on a keychain. Spell anything, press them, and they click.',
   tagline: 'A fidget keychain that spells whatever you want',
@@ -390,6 +420,16 @@ export const keyClickerGenerator: Generator = {
   validate,
   build,
   presets: [
+    {
+      // Chunky raised letters on soft pillowy keys, in rounded cells.
+      label: 'Curvy',
+      values: {
+        text: 'CLAIRE', baseStyle: 'cells', legendFont: 'bowlby-one-sc', legendStyle: 'raised',
+        legendSize: 9.5, legendDepth: 1.5, topCurve: 0, capCorner: 1.7, capRound: 2.9,
+        keyGap: 0.3, cellRound: 1.5,
+        bodyColor: '#c77ab9', capColor: '#c77ab9', legendColor: '#f5f5f5',
+      },
+    },
     {
       label: 'Name in a tray',
       values: {

@@ -30,7 +30,7 @@ describe('assembled preview', () => {
       // model a stem socket in, the drawer's identical bins, the shelf's
       // identical modules, and the pegboard's clamps and accessories, each
       // built once in its own frame and hung on its holes.
-      const placed = new Set(['keyclicker', 'drawer-organizer', 'shelf', 'pegboard']);
+      const placed = new Set(['keyclicker', 'wasd-clicker', 'mob-clicker', 'drawer-organizer', 'shelf', 'pegboard']);
       for (const gen of GENERATORS.filter((g) => !placed.has(g.id))) {
         const result = gen.build(coerceAll(gen, defaultsOf(gen)), ctxFor(m));
         for (const part of result.parts) {

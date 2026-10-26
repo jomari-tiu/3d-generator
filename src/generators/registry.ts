@@ -4,6 +4,8 @@ import { drawerOrganizerGenerator } from './drawer/build';
 import { hangarGenerator } from './hangar/build';
 import { imageTraceGenerator } from './imagetrace/build';
 import { keyClickerGenerator } from './keyclicker/build';
+import { wasdClickerGenerator } from './keyclicker/wasd';
+import { mobClickerGenerator } from './keyclicker/mob';
 import { msCageGenerator } from './mscage/build';
 import { keychainGenerator } from './keychain/build';
 import { logoKeychainGenerator } from './logokeychain/build';
@@ -17,6 +19,8 @@ export const GENERATORS: readonly Generator[] = [
   keychainGenerator,
   logoKeychainGenerator,
   keyClickerGenerator,
+  wasdClickerGenerator,
+  mobClickerGenerator,
   buildingGenerator,
   shelfGenerator,
   drawerOrganizerGenerator,

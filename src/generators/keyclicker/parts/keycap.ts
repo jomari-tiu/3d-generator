@@ -59,8 +59,25 @@ export function buildKeycap(
   d: Derived,
   legend: CrossSection | null,
 ): { cap: Manifold; insert: Manifold | null } {
+  const built = d.capRound > 0.05 ? buildRoundedKeycap(ctx, d, legend) : buildSquareKeycap(ctx, d, legend);
+  if (d.skirtLift <= 0.001) return built;
+  // Cut the skirt back so the pressed key clears the plate (see skirtLift).
+  // Everything outside the switch's cutout goes -- that is all skirt, and it
+  // is what would land on the plate -- and the stem, which hangs over the
+  // switch and so inside its cutout, is left whole.
   const { m } = ctx;
-  if (d.capRound > 0.05) return buildRoundedKeycap(ctx, d, legend);
+  const keep = Math.max(1, d.sw.cutout - 0.2);
+  const ring = m.CrossSection.square([d.keySize + 4, d.keySize + 4], true)
+    .subtract(m.CrossSection.square([keep, keep], true));
+  return { ...built, cap: built.cap.subtract(m.Manifold.extrude(ring, d.skirtLift + 1).translate([0, 0, -1])) };
+}
+
+function buildSquareKeycap(
+  ctx: BuildCtx,
+  d: Derived,
+  legend: CrossSection | null,
+): { cap: Manifold; insert: Manifold | null } {
+  const { m } = ctx;
 
   const outer = roundedRect(m, d.keySize, d.keySize, d.capCorner);
   const scaleTop = d.capTopSize / d.keySize;
@@ -142,6 +159,7 @@ export function buildKeycap(
   }
 
   if (!legend || d.legendStyle === 'none') return { cap, insert: null };
+  if (d.legendStyle === 'separate') return separateLetter(ctx, d, cap, legend);
 
   // Raised: grow the glyph from INSIDE the solid top face up past the surface,
   // then subtract the cap. What is left is exactly the material standing proud,
@@ -333,6 +351,7 @@ function buildRoundedKeycap(
   }
 
   if (!legend || d.legendStyle === 'none') return { cap, insert: null };
+  if (d.legendStyle === 'separate') return separateLetter(ctx, d, cap, legend);
 
   // Prisms run from the floor up past the crown; the surface decides where the
   // letter actually is. Subtracting the SOLID outside, not the hollow cap, is
@@ -353,6 +372,52 @@ function buildRoundedKeycap(
     cap: cap.subtract(cutter),
     insert: d.legendStyle === 'inlay' ? cap.intersect(cutter) : null,
   };
+}
+
+/**
+ * A letter printed on its own, and the recess in the cap it presses into.
+ *
+ * The letter is a plain flat extrusion so it prints on the bed with nothing
+ * under it, in whatever colour -- which is the point of making it separately.
+ * Its top is a legend depth above the HIGHEST point of the cap under it, so
+ * on a dome it is proud at the crown too and not sunk below it.
+ *
+ * The recess floor is FLAT, because the letter's underside is. It sits a
+ * legend depth below the LOWEST point of the top anywhere under the letter --
+ * found by measuring, not assumed -- so on a dish, a dome or a rounded edge
+ * the letter is fully seated everywhere and stands proud by at least the
+ * legend depth. A floor at a fixed height would leave part of a letter on a
+ * curve hanging over air.
+ */
+function separateLetter(
+  _ctx: BuildCtx,
+  d: Derived,
+  cap: Manifold,
+  legend: CrossSection,
+): { cap: Manifold; insert: Manifold | null } {
+  const roof = d.capH - d.capTop;
+  // Highest h with the prism from the roof up to h still entirely inside the
+  // cap: the lowest the top surface gets over the letter.
+  const full = (h: number): boolean => {
+    const prism = legend.extrude(h - roof).translate([0, 0, roof]);
+    return cap.intersect(prism).volume() >= prism.volume() * 0.999;
+  };
+  let lo = roof;
+  let hi = d.capH + d.capDome;
+  for (let k = 0; k < 14; k++) {
+    const mid = (lo + hi) / 2;
+    if (full(mid)) lo = mid;
+    else hi = mid;
+  }
+  const floor = Math.max(roof + 2 * d.layer, lo - d.legendDepth);
+  const highest = cap.intersect(legend.extrude(d.capH + d.capDome + 1)).boundingBox().max[2];
+
+  const recess = legend
+    .offset(d.letterClear, 'Round', 2, 24)
+    .extrude(d.capH + d.capDome + 1 - floor)
+    .translate([0, 0, floor]);
+  const letter = legend.extrude(highest - floor + d.legendDepth).translate([0, 0, floor]);
+  return { cap: cap.subtract(recess), insert: letter };
 }
 
 function buildStem(ctx: BuildCtx, d: Derived): Manifold {
